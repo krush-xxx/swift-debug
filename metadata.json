@@ -1,0 +1,5 @@
+{
+  "name": "Remix: SwiftType",
+  "description": "A minimalist typing test inspired by Monkeytype, featuring real-time WPM tracking and performance analytics.",
+  "requestFramePermissions": []
+}
