@@ -17,7 +17,9 @@ db.exec(`
     password TEXT NOT NULL,
     is_admin INTEGER DEFAULT 0,
     is_banned INTEGER DEFAULT 0,
-    is_leaderboard_banned INTEGER DEFAULT 0
+    is_leaderboard_banned INTEGER DEFAULT 0,
+    ban_reason TEXT,
+    ban_expires_at DATETIME
   );
   CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +52,12 @@ try {
 try {
   db.exec("ALTER TABLE users ADD COLUMN is_leaderboard_banned INTEGER DEFAULT 0");
 } catch (e) {}
+try {
+  db.exec("ALTER TABLE users ADD COLUMN ban_reason TEXT");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE users ADD COLUMN ban_expires_at DATETIME");
+} catch (e) {}
 
 async function startServer() {
   const app = express();
@@ -72,8 +80,20 @@ async function startServer() {
     const userId = req.headers['x-user-id'];
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
-      const user = db.prepare("SELECT id, username, is_admin FROM users WHERE id = ?").get(Number(userId)) as any;
+      const user = db.prepare(`
+        SELECT id, username, is_admin, is_banned, ban_reason, ban_expires_at 
+        FROM users 
+        WHERE id = ?
+      `).get(Number(userId)) as any;
+      
       if (user) {
+        // Check if ban has expired
+        if (user.is_banned && user.ban_expires_at && new Date(user.ban_expires_at) < new Date()) {
+          db.prepare("UPDATE users SET is_banned = 0, ban_reason = NULL, ban_expires_at = NULL WHERE id = ?").run(user.id);
+          user.is_banned = 0;
+          user.ban_reason = null;
+          user.ban_expires_at = null;
+        }
         res.json(user);
       } else {
         res.status(404).json({ error: "User not found" });
@@ -88,7 +108,7 @@ async function startServer() {
     try {
       const stmt = db.prepare("INSERT INTO users (username, password) VALUES (?, ?)");
       const result = stmt.run(username, password);
-      res.json({ id: result.lastInsertRowid, username, is_admin: 0 });
+      res.json({ id: result.lastInsertRowid, username, is_admin: 0, is_banned: 0 });
     } catch (err: any) {
       if (err.code === 'SQLITE_CONSTRAINT') {
         res.status(400).json({ error: "Username already exists" });
@@ -102,10 +122,22 @@ async function startServer() {
     const { username, password } = req.body;
     const user = db.prepare("SELECT * FROM users WHERE username = ? AND password = ?").get(username, password) as any;
     if (user) {
-      if (user.is_banned) {
-        return res.status(403).json({ error: "Your account has been banned." });
+      // Check if ban has expired
+      if (user.is_banned && user.ban_expires_at && new Date(user.ban_expires_at) < new Date()) {
+        db.prepare("UPDATE users SET is_banned = 0, ban_reason = NULL, ban_expires_at = NULL WHERE id = ?").run(user.id);
+        user.is_banned = 0;
+        user.ban_reason = null;
+        user.ban_expires_at = null;
       }
-      res.json({ id: user.id, username: user.username, is_admin: user.is_admin });
+      
+      res.json({ 
+        id: user.id, 
+        username: user.username, 
+        is_admin: user.is_admin,
+        is_banned: user.is_banned,
+        ban_reason: user.ban_reason,
+        ban_expires_at: user.ban_expires_at
+      });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
     }
@@ -117,8 +149,16 @@ async function startServer() {
     if (!user_id) return res.status(401).json({ error: "Unauthorized" });
     
     // Check if user is banned
-    const user = db.prepare("SELECT is_banned FROM users WHERE id = ?").get(user_id) as any;
-    if (!user || user.is_banned) return res.status(403).json({ error: "Forbidden" });
+    const user = db.prepare("SELECT is_banned, ban_expires_at FROM users WHERE id = ?").get(user_id) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    
+    if (user.is_banned) {
+      if (user.ban_expires_at && new Date(user.ban_expires_at) < new Date()) {
+        db.prepare("UPDATE users SET is_banned = 0, ban_reason = NULL, ban_expires_at = NULL WHERE id = ?").run(user_id);
+      } else {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
 
     const stmt = db.prepare("INSERT INTO scores (user_id, wpm, accuracy, mode) VALUES (?, ?, ?, ?)");
     stmt.run(user_id, wpm, accuracy, mode);
@@ -130,7 +170,8 @@ async function startServer() {
       SELECT u.id, u.username, MAX(s.wpm) as wpm, s.accuracy, s.mode, s.created_at
       FROM scores s
       JOIN users u ON s.user_id = u.id
-      WHERE u.is_leaderboard_banned = 0 AND u.is_banned = 0
+      WHERE u.is_leaderboard_banned = 0 
+      AND (u.is_banned = 0 OR (u.ban_expires_at IS NOT NULL AND u.ban_expires_at < CURRENT_TIMESTAMP))
       GROUP BY u.id
       ORDER BY wpm DESC
       LIMIT 10
@@ -156,20 +197,31 @@ async function startServer() {
   };
 
   app.get("/api/admin/users", isAdmin, (req, res) => {
-    const users = db.prepare("SELECT id, username, is_admin, is_banned, is_leaderboard_banned FROM users").all();
+    const users = db.prepare("SELECT id, username, is_admin, is_banned, is_leaderboard_banned, ban_reason, ban_expires_at FROM users").all();
     res.json(users);
   });
 
   app.post("/api/admin/user-action", isAdmin, (req, res) => {
-    const { targetUserId, action } = req.body;
+    const { targetUserId, action, reason, duration } = req.body;
     let stmt;
     switch (action) {
       case 'ban':
-        stmt = db.prepare("UPDATE users SET is_banned = 1 WHERE id = ?");
-        break;
+        let expiresAt = null;
+        if (duration && duration !== 'permanent') {
+          const now = new Date();
+          const d = parseInt(duration);
+          if (duration.endsWith('h')) now.setHours(now.getHours() + d);
+          else if (duration.endsWith('d')) now.setDate(now.getDate() + d);
+          else if (duration.endsWith('m')) now.setMinutes(now.getMinutes() + d);
+          expiresAt = now.toISOString();
+        }
+        stmt = db.prepare("UPDATE users SET is_banned = 1, ban_reason = ?, ban_expires_at = ? WHERE id = ?");
+        stmt.run(reason || "No reason provided", expiresAt, targetUserId);
+        return res.json({ success: true });
       case 'unban':
-        stmt = db.prepare("UPDATE users SET is_banned = 0 WHERE id = ?");
-        break;
+        stmt = db.prepare("UPDATE users SET is_banned = 0, ban_reason = NULL, ban_expires_at = NULL WHERE id = ?");
+        stmt.run(targetUserId);
+        return res.json({ success: true });
       case 'leaderboard_ban':
         stmt = db.prepare("UPDATE users SET is_leaderboard_banned = 1 WHERE id = ?");
         break;

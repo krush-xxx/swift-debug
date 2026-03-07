@@ -49,6 +49,9 @@ interface UserData {
   id: number;
   username: string;
   is_admin: boolean;
+  is_banned: boolean;
+  ban_reason?: string;
+  ban_expires_at?: string;
 }
 
 interface AdminUser {
@@ -57,6 +60,8 @@ interface AdminUser {
   is_admin: boolean;
   is_banned: boolean;
   is_leaderboard_banned: boolean;
+  ban_reason?: string;
+  ban_expires_at?: string;
 }
 
 interface Announcement {
@@ -73,6 +78,39 @@ interface LeaderboardEntry {
   mode: string;
   created_at: string;
 }
+
+const Countdown = ({ expiresAt }: { expiresAt: string }) => {
+  const [timeLeft, setTimeLeft] = useState("");
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date().getTime();
+      const target = new Date(expiresAt).getTime();
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setTimeLeft("Expired");
+        return;
+      }
+
+      const h = Math.floor(diff / (1000 * 60 * 60));
+      const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const s = Math.floor((diff % (1000 * 60)) / 1000);
+
+      const parts = [];
+      if (h > 0) parts.push(`${h}h`);
+      if (m > 0 || h > 0) parts.push(`${m}m`);
+      parts.push(`${s}s`);
+      setTimeLeft(parts.join(" "));
+    };
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
+
+  return <span>{timeLeft}</span>;
+};
 
 export default function App() {
   // Config
@@ -113,6 +151,9 @@ export default function App() {
   // Admin State
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminSearch, setAdminSearch] = useState('');
+  const [banModalUser, setBanModalUser] = useState<AdminUser | null>(null);
+  const [banReason, setBanReason] = useState("");
+  const [banDuration, setBanDuration] = useState("permanent");
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementInput, setAnnouncementInput] = useState('');
   const [adminLoading, setAdminLoading] = useState(false);
@@ -120,6 +161,15 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastHistoryTimeRef = useRef<number>(0);
+  const userInputRef = useRef(userInput);
+  const keystrokesRef = useRef(keystrokes);
+  const correctKeystrokesRef = useRef(correctKeystrokes);
+
+  useEffect(() => {
+    userInputRef.current = userInput;
+    keystrokesRef.current = keystrokes;
+    correctKeystrokesRef.current = correctKeystrokes;
+  }, [userInput, keystrokes, correctKeystrokes]);
 
   // Initialize words
   const initTest = () => {
@@ -179,15 +229,20 @@ export default function App() {
     };
   }, [state, startTime, mode, timeLimit]);
 
-  const calculateStats = (elapsed: number) => {
-    if (elapsed <= 0) return;
+  const calculateStats = (elapsed: number, currentInput?: string, currentKs?: number, currentCks?: number) => {
+    if (elapsed <= 0.5) return;
     
+    const input = currentInput !== undefined ? currentInput : userInputRef.current;
+    const ks = currentKs !== undefined ? currentKs : keystrokesRef.current;
+    const cks = currentCks !== undefined ? currentCks : correctKeystrokesRef.current;
+
     const targetText = words.join(' ');
     let currentCorrectChars = 0;
     let currentErrors = 0;
     
-    for (let i = 0; i < userInput.length; i++) {
-      if (userInput[i] === targetText[i]) {
+    // Calculate what's currently correct in the input field
+    for (let i = 0; i < input.length; i++) {
+      if (input[i] === targetText[i]) {
         currentCorrectChars++;
       } else {
         currentErrors++;
@@ -195,9 +250,16 @@ export default function App() {
     }
 
     const minutes = elapsed / 60;
+    
+    // Net WPM: Standard WPM based on correct characters currently in the input
+    // This rewards accuracy and penalizes uncorrected errors
     const currentWpm = Math.round((currentCorrectChars / 5) / minutes);
-    const currentRawWpm = Math.round((keystrokes / 5) / minutes);
-    const currentAccuracy = keystrokes > 0 ? Math.round((correctKeystrokes / keystrokes) * 100) : 0;
+    
+    // Raw WPM: Based on total keystrokes (effort/speed)
+    const currentRawWpm = Math.round((ks / 5) / minutes);
+    
+    // Accuracy: Based on total keystrokes vs correct ones typed
+    const currentAccuracy = ks > 0 ? Math.round((cks / ks) * 100) : 0;
 
     setWpm(currentWpm);
     setRawWpm(currentRawWpm);
@@ -219,11 +281,6 @@ export default function App() {
     }
   };
 
-  const startTest = () => {
-    setState('running');
-    setStartTime(Date.now());
-  };
-
   const finishTest = () => {
     setState('finished');
     if (timerRef.current) clearInterval(timerRef.current);
@@ -235,17 +292,32 @@ export default function App() {
   };
 
   const submitScore = async () => {
+    if (!user?.id) return;
     try {
-      await fetch('/api/scores', {
+      const res = await fetch('/api/scores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: user?.id,
+          user_id: user.id,
           wpm,
           accuracy,
           mode: `${mode} ${mode === 'time' ? timeLimit : wordLimit}`
         })
       });
+      
+      if (res.status === 403) {
+        // User might be banned, refresh status
+        fetch('/api/auth/me', {
+          headers: { 'x-user-id': user.id.toString() }
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.id) {
+            setUser(data);
+            localStorage.setItem('swifttype_user', JSON.stringify(data));
+          }
+        });
+      }
     } catch (err) {
       console.error("Failed to submit score", err);
     }
@@ -308,7 +380,7 @@ export default function App() {
     }
   };
 
-  const handleUserAction = async (targetUserId: number, action: string) => {
+  const handleUserAction = async (targetUserId: number, action: string, reason?: string, duration?: string) => {
     if (!user?.is_admin) return;
     try {
       const res = await fetch('/api/admin/user-action', {
@@ -317,10 +389,13 @@ export default function App() {
           'Content-Type': 'application/json',
           'x-admin-id': user.id.toString()
         },
-        body: JSON.stringify({ targetUserId, action })
+        body: JSON.stringify({ targetUserId, action, reason, duration })
       });
       if (res.ok) {
         fetchAdminUsers();
+        setBanModalUser(null);
+        setBanReason("");
+        setBanDuration("permanent");
       }
     } catch (err) {
       console.error("Failed to perform admin action", err);
@@ -368,19 +443,36 @@ export default function App() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (state === 'finished') return;
-    if (state === 'idle') startTest();
+    
+    let currentStartTime = startTime;
+    if (state === 'idle') {
+      currentStartTime = Date.now();
+      setStartTime(currentStartTime);
+      setState('running');
+    }
     
     const val = e.target.value;
     const targetText = words.join(' ');
     
+    let newKeystrokes = keystrokes;
+    let newCorrectKeystrokes = correctKeystrokes;
+
     if (val.length > userInput.length) {
-      setKeystrokes(prev => prev + 1);
+      newKeystrokes++;
+      setKeystrokes(newKeystrokes);
       if (val[val.length - 1] === targetText[val.length - 1]) {
-        setCorrectKeystrokes(prev => prev + 1);
+        newCorrectKeystrokes++;
+        setCorrectKeystrokes(newCorrectKeystrokes);
       }
     }
     
     setUserInput(val);
+
+    // Calculate real-time stats immediately for smoother UI
+    if (currentStartTime) {
+      const elapsed = (Date.now() - currentStartTime) / 1000;
+      calculateStats(elapsed, val, newKeystrokes, newCorrectKeystrokes);
+    }
 
     if (mode === 'words') {
       const typedWords = val.trim().split(/\s+/).length;
@@ -482,6 +574,55 @@ export default function App() {
       </div>
     );
   }, [words, userInput]);
+
+  const isBanned = user?.is_banned && !user?.is_admin;
+
+  if (isBanned) {
+    return (
+      <div className="min-h-screen bg-[#111111] text-[#eeeeee] flex items-center justify-center p-4 font-mono">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full bg-[#1a1a1a] border border-red-900/30 rounded-2xl p-8 text-center shadow-2xl"
+        >
+          <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <X className="w-10 h-10 text-red-500" />
+          </div>
+          <h1 className="text-3xl font-bold mb-4 text-red-500 tracking-tight uppercase">Access Denied</h1>
+          <p className="text-gray-400 mb-8 leading-relaxed">
+            Your account (<span className="text-white">{user?.username}</span>) has been {user?.ban_expires_at ? 'temporarily' : 'permanently'} banned from Swifttype.
+          </p>
+          <div className="space-y-4">
+            <div className="p-4 bg-black/30 rounded-xl border border-white/5 text-sm text-left">
+              <div className="text-gray-500 uppercase text-[10px] font-bold tracking-widest mb-1 text-center">Reason</div>
+              <div className="text-gray-300 italic text-center">"{user?.ban_reason || "Suspicious activity or community violation"}"</div>
+            </div>
+            {user?.ban_expires_at && (
+              <div className="p-4 bg-black/30 rounded-xl border border-white/5 text-sm text-left">
+                <div className="text-gray-500 uppercase text-[10px] font-bold tracking-widest mb-1 text-center">Unbans In</div>
+                <div className="text-gray-300 text-center font-mono text-lg">
+                  <Countdown expiresAt={user.ban_expires_at} />
+                </div>
+              </div>
+            )}
+            <button 
+              onClick={() => {
+                setUser(null);
+                localStorage.removeItem('swifttype_user');
+              }}
+              className="w-full py-3 bg-white text-black rounded-xl font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
+          </div>
+          <div className="mt-8 pt-6 border-t border-white/5 text-[10px] text-gray-600 uppercase tracking-[0.2em]">
+            Swifttype Security Protocol v2.4.0
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-12 max-w-6xl mx-auto">
@@ -811,9 +952,16 @@ export default function App() {
                                   </div>
                                 </td>
                               <td className="px-8 py-4">
-                                <div className="flex gap-2">
-                                  {u.is_banned && <span className="px-1.5 py-0.5 bg-error/20 text-error text-[8px] font-black uppercase rounded border border-error/30">Banned</span>}
-                                  {u.is_leaderboard_banned && <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-500 text-[8px] font-black uppercase rounded border border-orange-500/30">LB Banned</span>}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex gap-2">
+                                    {u.is_banned && <span className="px-1.5 py-0.5 bg-error/20 text-error text-[8px] font-black uppercase rounded border border-error/30">Banned</span>}
+                                    {u.is_leaderboard_banned && <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-500 text-[8px] font-black uppercase rounded border border-orange-500/30">LB Banned</span>}
+                                  </div>
+                                  {u.is_banned && u.ban_expires_at && (
+                                    <div className="text-[9px] text-error/60 font-mono">
+                                      Ends in: <Countdown expiresAt={u.ban_expires_at} />
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-8 py-4">
@@ -821,7 +969,7 @@ export default function App() {
                                   {u.is_banned ? (
                                     <button onClick={() => handleUserAction(u.id, 'unban')} className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition-all">Unban</button>
                                   ) : (
-                                    <button onClick={() => handleUserAction(u.id, 'ban')} className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 hover:bg-error/20 transition-all">Ban</button>
+                                    <button onClick={() => setBanModalUser(u)} className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 hover:bg-error/20 transition-all">Ban</button>
                                   )}
                                   
                                   {u.is_leaderboard_banned ? (
@@ -849,6 +997,71 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Ban Modal */}
+      <AnimatePresence>
+        {banModalUser && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setBanModalUser(null)} className="absolute inset-0 bg-bg/90 backdrop-blur-md" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative w-full max-w-md bg-white/5 border border-white/10 rounded-[2rem] p-8 shadow-2xl">
+              <h3 className="text-xl font-black text-text mb-2">Ban User: {banModalUser.username}</h3>
+              <p className="text-sub text-sm mb-6 text-error font-medium">This will restrict their access to the platform.</p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-sub mb-2">Ban Reason</label>
+                  <textarea 
+                    value={banReason}
+                    onChange={(e) => setBanReason(e.target.value)}
+                    placeholder="e.g. Cheating, Inappropriate behavior..."
+                    className="w-full h-24 bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-text focus:outline-none focus:border-error/50 transition-all resize-none"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-sub mb-2">Duration</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { label: '1 Hour', value: '1h' },
+                      { label: '1 Day', value: '1d' },
+                      { label: '7 Days', value: '7d' },
+                      { label: 'Permanent', value: 'permanent' }
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setBanDuration(opt.value)}
+                        className={cn(
+                          "py-2 rounded-lg text-xs font-bold border transition-all",
+                          banDuration === opt.value 
+                            ? "bg-error text-bg border-error shadow-lg shadow-error/20" 
+                            : "bg-white/5 text-sub border-white/10 hover:border-white/20"
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    onClick={() => setBanModalUser(null)}
+                    className="flex-1 py-3 bg-white/5 text-sub font-bold rounded-xl border border-white/10 hover:bg-white/10 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => handleUserAction(banModalUser.id, 'ban', banReason, banDuration)}
+                    className="flex-1 py-3 bg-error text-bg font-black rounded-xl shadow-lg shadow-error/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  >
+                    Confirm Ban
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Auth Modal */}
       <AnimatePresence>
