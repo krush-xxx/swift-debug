@@ -15,7 +15,8 @@ import {
   LogOut,
   Trophy,
   X,
-  ChevronRight
+  ChevronRight,
+  Activity
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -36,13 +37,27 @@ function cn(...inputs: ClassValue[]) {
 
 type TestMode = 'time' | 'words';
 type TestState = 'idle' | 'running' | 'finished';
-type View = 'test' | 'leaderboard' | 'admin';
+type View = 'test' | 'leaderboard' | 'admin' | 'profile';
 
 interface HistoryPoint {
   time: number;
   wpm: number;
   rawWpm: number;
   errors: number;
+}
+
+interface ProfileStats {
+  total_tests: number;
+  highest_wpm: number;
+  avg_wpm: number;
+  avg_accuracy: number;
+}
+
+interface ProfileRecentTest {
+  wpm: number;
+  accuracy: number;
+  mode: string;
+  created_at: string;
 }
 
 interface UserData {
@@ -157,6 +172,14 @@ export default function App() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementInput, setAnnouncementInput] = useState('');
   const [adminLoading, setAdminLoading] = useState(false);
+  
+  // Profile State
+  const [profileStats, setProfileStats] = useState<ProfileStats | null>(null);
+  const [profileRecentTests, setProfileRecentTests] = useState<ProfileRecentTest[]>([]);
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
   
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -399,6 +422,45 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to perform admin action", err);
+    }
+  };
+
+  const fetchProfile = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/users/${user.id}/stats`);
+      const data = await res.json();
+      setProfileStats(data.stats);
+      setProfileRecentTests(data.recent_tests);
+    } catch (err) {
+      console.error("Failed to fetch profile stats", err);
+    }
+  };
+
+  const handleUpdateUsername = async () => {
+    if (!user) return;
+    setProfileError('');
+    setProfileSuccess('');
+    
+    try {
+      const res = await fetch(`/api/users/${user.id}/username`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newUsername })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        const updatedUser = { ...user, username: data.username };
+        setUser(updatedUser);
+        localStorage.setItem('swifttype_user', JSON.stringify(updatedUser));
+        setProfileSuccess('Username updated successfully');
+        setEditingUsername(false);
+      } else {
+        setProfileError(data.error || 'Failed to update username');
+      }
+    } catch (err) {
+      setProfileError('Network error');
     }
   };
 
@@ -646,7 +708,13 @@ export default function App() {
           
           {user ? (
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-text">
+              <button 
+                onClick={() => { setView('profile'); fetchProfile(); setNewUsername(user.username); setProfileError(''); setProfileSuccess(''); setEditingUsername(false); }}
+                className={cn(
+                  "flex items-center gap-2 text-text hover:bg-white/5 px-3 py-1.5 rounded-xl transition-all border border-transparent",
+                  view === 'profile' && "bg-white/5 border-white/10"
+                )}
+              >
                 <div className="w-8 h-8 rounded-full bg-main/20 flex items-center justify-center text-main border border-main/20">
                   <User size={16} />
                 </div>
@@ -655,12 +723,12 @@ export default function App() {
                   <span className="text-[10px] text-sub font-mono">#{user.id.toString().padStart(4, '0')}</span>
                 </div>
                 {user.is_admin && (
-                  <span className="px-2 py-0.5 bg-main/20 text-main text-[10px] font-black uppercase tracking-widest rounded-md border border-main/30">
+                  <span className="px-2 py-0.5 bg-main/20 text-main text-[10px] font-black uppercase tracking-widest rounded-md border border-main/30 ml-2">
                     Admin
                   </span>
                 )}
-              </div>
-              <button onClick={logout} className="text-sub hover:text-error transition-colors"><LogOut size={18} /></button>
+              </button>
+              <button onClick={logout} className="text-sub hover:text-error transition-colors p-2 rounded-xl hover:bg-error/10"><LogOut size={18} /></button>
             </div>
           ) : (
             <button 
@@ -868,7 +936,7 @@ export default function App() {
                 </table>
               </div>
             </motion.div>
-          ) : (
+          ) : view === 'admin' && user?.is_admin ? (
             <motion.div key="admin" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-5xl">
               <div className="flex items-center justify-between mb-12">
                 <div className="flex items-center gap-4">
@@ -994,7 +1062,156 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-          )}
+          ) : view === 'profile' && user ? (
+            <motion.div key="profile" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-4xl">
+              <div className="flex items-center justify-between mb-12">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-main/10 rounded-2xl border border-main/20">
+                    <User className="w-8 h-8 text-main" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-black tracking-tight text-text">Your Profile</h2>
+                    <p className="text-sub text-sm">Manage your account and view statistics</p>
+                  </div>
+                </div>
+                <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
+                  Back to test <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {/* Account Settings */}
+                <div className="md:col-span-1 space-y-8">
+                  <div className="bg-white/5 rounded-3xl border border-white/10 p-6 shadow-2xl">
+                    <h3 className="text-lg font-bold text-text mb-4 flex items-center gap-2">
+                      <Settings size={18} className="text-main" /> Account
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-sub mb-2">Username</label>
+                        {editingUsername ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newUsername}
+                              onChange={(e) => setNewUsername(e.target.value)}
+                              className="flex-1 bg-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-main/50 transition-colors"
+                              placeholder="New username"
+                            />
+                            <button 
+                              onClick={handleUpdateUsername}
+                              className="bg-main text-bg px-3 py-2 rounded-lg text-sm font-bold hover:bg-main/90 transition-colors"
+                            >
+                              Save
+                            </button>
+                            <button 
+                              onClick={() => { setEditingUsername(false); setNewUsername(user.username); setProfileError(''); }}
+                              className="bg-white/5 text-sub px-3 py-2 rounded-lg text-sm font-bold hover:bg-white/10 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between bg-bg border border-white/5 rounded-lg px-4 py-3">
+                            <span className="text-text font-medium">{user.username}</span>
+                            <button 
+                              onClick={() => setEditingUsername(true)}
+                              className="text-main text-xs font-bold uppercase tracking-wider hover:text-main/80 transition-colors"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
+                        {profileError && <p className="text-error text-xs mt-2">{profileError}</p>}
+                        {profileSuccess && <p className="text-main text-xs mt-2">{profileSuccess}</p>}
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-sub mb-2">Account ID</label>
+                        <div className="bg-bg border border-white/5 rounded-lg px-4 py-3 text-sub font-mono text-sm">
+                          #{user.id.toString().padStart(4, '0')}
+                        </div>
+                      </div>
+                      
+                      <div className="pt-4 border-t border-white/5">
+                        <button 
+                          onClick={logout}
+                          className="w-full flex items-center justify-center gap-2 bg-error/10 text-error px-4 py-3 rounded-xl border border-error/20 hover:bg-error/20 transition-all font-bold text-sm"
+                        >
+                          <LogOut size={16} /> Sign Out
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Statistics */}
+                <div className="md:col-span-2 space-y-8">
+                  {profileStats && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="bg-white/5 rounded-2xl border border-white/10 p-4 flex flex-col items-center justify-center text-center">
+                        <span className="text-sub text-[10px] font-bold uppercase tracking-widest mb-1">Tests Taken</span>
+                        <span className="text-2xl font-black text-text">{profileStats.total_tests}</span>
+                      </div>
+                      <div className="bg-white/5 rounded-2xl border border-white/10 p-4 flex flex-col items-center justify-center text-center">
+                        <span className="text-sub text-[10px] font-bold uppercase tracking-widest mb-1">Highest WPM</span>
+                        <span className="text-2xl font-black text-main">{profileStats.highest_wpm}</span>
+                      </div>
+                      <div className="bg-white/5 rounded-2xl border border-white/10 p-4 flex flex-col items-center justify-center text-center">
+                        <span className="text-sub text-[10px] font-bold uppercase tracking-widest mb-1">Average WPM</span>
+                        <span className="text-2xl font-black text-text">{profileStats.avg_wpm}</span>
+                      </div>
+                      <div className="bg-white/5 rounded-2xl border border-white/10 p-4 flex flex-col items-center justify-center text-center">
+                        <span className="text-sub text-[10px] font-bold uppercase tracking-widest mb-1">Avg Accuracy</span>
+                        <span className="text-2xl font-black text-text">{profileStats.avg_accuracy}%</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-white/5 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
+                    <div className="p-6 border-b border-white/5">
+                      <h3 className="text-lg font-bold text-text flex items-center gap-2">
+                        <Activity size={18} className="text-main" /> Recent Tests
+                      </h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-white/5 text-sub text-[10px] font-bold uppercase tracking-[0.2em]">
+                            <th className="px-6 py-4">Date</th>
+                            <th className="px-6 py-4">WPM</th>
+                            <th className="px-6 py-4">Accuracy</th>
+                            <th className="px-6 py-4">Mode</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {profileRecentTests.length > 0 ? (
+                            profileRecentTests.map((test, idx) => (
+                              <tr key={idx} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="px-6 py-4 text-sm text-sub">
+                                  {new Date(test.created_at).toLocaleDateString()} {new Date(test.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                </td>
+                                <td className="px-6 py-4 font-black text-main">{test.wpm}</td>
+                                <td className="px-6 py-4 text-text">{test.accuracy}%</td>
+                                <td className="px-6 py-4 text-sub text-xs uppercase tracking-wider">{test.mode}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="px-6 py-8 text-center text-sub text-sm">
+                                No tests completed yet.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
         </AnimatePresence>
       </main>
 

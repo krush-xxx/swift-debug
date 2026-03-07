@@ -179,6 +179,58 @@ async function startServer() {
     res.json(scores);
   });
 
+  // Profile Endpoints
+  app.get("/api/users/:id/stats", (req, res) => {
+    const userId = req.params.id;
+    const stats = db.prepare(`
+      SELECT 
+        COUNT(*) as total_tests,
+        MAX(wpm) as highest_wpm,
+        AVG(wpm) as avg_wpm,
+        AVG(accuracy) as avg_accuracy
+      FROM scores
+      WHERE user_id = ?
+    `).get(userId) as any;
+
+    const recentTests = db.prepare(`
+      SELECT wpm, accuracy, mode, created_at
+      FROM scores
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).all(userId);
+
+    res.json({
+      stats: {
+        total_tests: stats?.total_tests || 0,
+        highest_wpm: stats?.highest_wpm || 0,
+        avg_wpm: Math.round(stats?.avg_wpm || 0),
+        avg_accuracy: Math.round(stats?.avg_accuracy || 0)
+      },
+      recent_tests: recentTests
+    });
+  });
+
+  app.put("/api/users/:id/username", (req, res) => {
+    const userId = req.params.id;
+    const { newUsername } = req.body;
+    
+    if (!newUsername || newUsername.trim().length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters long" });
+    }
+
+    try {
+      db.prepare("UPDATE users SET username = ? WHERE id = ?").run(newUsername.trim(), userId);
+      res.json({ success: true, username: newUsername.trim() });
+    } catch (err: any) {
+      if (err.message.includes('UNIQUE constraint failed')) {
+        res.status(400).json({ error: "Username already exists" });
+      } else {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  });
+
   // Admin Endpoints
   const isAdmin = (req: any, res: any, next: any) => {
     const adminId = req.headers['x-admin-id'];
