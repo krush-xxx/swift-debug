@@ -168,7 +168,7 @@ export default function App() {
   const [view, setView] = useState<View>('test');
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('swifttype_settings');
-    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
   });
 
   useEffect(() => {
@@ -1031,7 +1031,7 @@ export default function App() {
 
                 {/* Reset Button */}
                 <div className="mt-16 flex justify-center">
-                  <button onClick={initTest} className="group relative p-4 rounded-2xl bg-white/5 hover:bg-main/10 border border-white/10 hover:border-main/20 transition-all" title={`Restart (${settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
+                  <button onClick={initTest} className="group relative p-4 rounded-2xl bg-white/5 hover:bg-main/10 border border-white/10 hover:border-main/20 transition-all" title={`Restart (${settings.restartKey && settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={24} className="text-sub group-hover:text-main group-hover:rotate-180 transition-all duration-500" />
                   </button>
                 </div>
@@ -1062,7 +1062,7 @@ export default function App() {
                       <div className="text-error text-xl font-bold">{errorCount}</div>
                     </div>
                   </div>
-                  <button onClick={initTest} className="mt-4 bg-main text-bg font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-main/20" title={`Restart (${settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
+                  <button onClick={initTest} className="mt-4 bg-main text-bg font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-main/20" title={`Restart (${settings.restartKey && settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={20} /> Try Again
                   </button>
                 </div>
