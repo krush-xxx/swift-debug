@@ -317,7 +317,7 @@ export default function App() {
   const submitScore = async () => {
     if (!user?.id) return;
     try {
-      const res = await fetch('/api/scores', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/scores`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -330,7 +330,7 @@ export default function App() {
       
       if (res.status === 403) {
         // User might be banned, refresh status
-        fetch('/api/auth/me', {
+        fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/me`, {
           headers: { 'x-user-id': user.id.toString() }
         })
         .then(r => r.json())
@@ -348,7 +348,7 @@ export default function App() {
 
   const fetchLeaderboard = async () => {
     try {
-      const res = await fetch('/api/leaderboard');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/leaderboard`);
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
@@ -364,7 +364,7 @@ export default function App() {
 
   const fetchAnnouncements = async () => {
     try {
-      const res = await fetch('/api/announcements');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/announcements`);
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
@@ -381,7 +381,7 @@ export default function App() {
     if (!user?.is_admin || !user?.id) return;
     setAdminLoading(true);
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/admin/users`, {
         headers: { 'x-admin-id': user.id.toString() }
       });
       
@@ -406,7 +406,7 @@ export default function App() {
   const handleUserAction = async (targetUserId: number, action: string, reason?: string, duration?: string) => {
     if (!user?.is_admin) return;
     try {
-      const res = await fetch('/api/admin/user-action', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/admin/user-action`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -428,7 +428,7 @@ export default function App() {
   const fetchProfile = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/users/${user.id}/stats`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/stats`);
       const data = await res.json();
       setProfileStats(data.stats);
       setProfileRecentTests(data.recent_tests);
@@ -443,7 +443,7 @@ export default function App() {
     setProfileSuccess('');
     
     try {
-      const res = await fetch(`/api/users/${user.id}/username`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/username`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newUsername })
@@ -468,7 +468,7 @@ export default function App() {
     e.preventDefault();
     if (!user?.is_admin || !announcementInput.trim()) return;
     try {
-      const res = await fetch('/api/admin/announce', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/admin/announce`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -489,7 +489,7 @@ export default function App() {
     fetchAnnouncements();
     // Refresh user data if logged in
     if (user?.id) {
-      fetch('/api/auth/me', {
+      fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/me`, {
         headers: { 'x-user-id': user.id.toString() }
       })
       .then(res => res.json())
@@ -547,7 +547,7 @@ export default function App() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/signup';
+    const endpoint = authMode === 'login' ? `${import.meta.env.VITE_API_URL || ''}/api/auth/login` : `${import.meta.env.VITE_API_URL || ''}/api/auth/signup`;
     
     try {
       const res = await fetch(endpoint, {
@@ -1211,7 +1211,20 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-          ) : null}
+          ) : (
+            <motion.div key="not-found" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center py-20 w-full">
+              <div className="p-4 bg-error/10 rounded-2xl border border-error/20 mb-6">
+                <X className="w-12 h-12 text-error" />
+              </div>
+              <h2 className="text-3xl font-black text-text mb-2">Not Found</h2>
+              <p className="text-sub text-sm mb-8 text-center max-w-md">
+                The page you are looking for does not exist or you do not have permission to view it.
+              </p>
+              <button onClick={() => setView('test')} className="bg-white/5 text-text px-6 py-3 rounded-xl font-bold hover:bg-white/10 transition-colors">
+                Return to Test
+              </button>
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
