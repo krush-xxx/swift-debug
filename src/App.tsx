@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   RefreshCw, 
@@ -16,7 +16,8 @@ import {
   Trophy,
   X,
   ChevronRight,
-  Activity
+  Activity,
+  Sliders
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -29,7 +30,7 @@ import {
 } from 'recharts';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { WORDS } from './constants';
+import { WORDS_EN, WORDS_ES, WORDS_FR, WORDS_DE } from './constants';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -37,7 +38,37 @@ function cn(...inputs: ClassValue[]) {
 
 type TestMode = 'time' | 'words';
 type TestState = 'idle' | 'running' | 'finished';
-type View = 'test' | 'leaderboard' | 'admin' | 'profile';
+type View = 'test' | 'leaderboard' | 'admin' | 'profile' | 'settings';
+
+interface AppSettings {
+  themeColor: string;
+  siteTheme: 'dark' | 'light' | 'midnight' | 'terminal';
+  fontFamily: string;
+  fontSize: number;
+  language: 'en' | 'es' | 'fr' | 'de';
+  smoothCaret: boolean;
+  caretStyle: 'line' | 'block' | 'underline';
+  caretSpeed: 'normal' | 'fast' | 'slow';
+  paceCaret: 'none' | 'line' | 'block';
+  paceCaretSpeed: number;
+  keySounds: 'none' | 'click' | 'beep';
+  showKeymap: boolean;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  themeColor: '#10b981', // Emerald
+  siteTheme: 'dark',
+  fontFamily: 'font-sans',
+  fontSize: 1.5,
+  language: 'en',
+  smoothCaret: true,
+  caretStyle: 'line',
+  caretSpeed: 'normal',
+  paceCaret: 'none',
+  paceCaretSpeed: 60,
+  keySounds: 'none',
+  showKeymap: false,
+};
 
 interface HistoryPoint {
   time: number;
@@ -133,6 +164,39 @@ export default function App() {
   const [timeLimit, setTimeLimit] = useState(30);
   const [wordLimit, setWordLimit] = useState(25);
   const [view, setView] = useState<View>('test');
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const saved = localStorage.getItem('swifttype_settings');
+    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('swifttype_settings', JSON.stringify(settings));
+    const root = document.documentElement;
+    root.style.setProperty('--color-main', settings.themeColor);
+    root.style.setProperty('--color-caret', settings.themeColor);
+    root.style.setProperty('--color-correct', settings.themeColor);
+
+    if (settings.siteTheme === 'dark') {
+      root.style.setProperty('--color-bg', '#0f172a');
+      root.style.setProperty('--color-text', '#f8fafc');
+      root.style.setProperty('--color-sub', '#475569');
+    } else if (settings.siteTheme === 'light') {
+      root.style.setProperty('--color-bg', '#f8fafc');
+      root.style.setProperty('--color-text', '#0f172a');
+      root.style.setProperty('--color-sub', '#94a3b8');
+    } else if (settings.siteTheme === 'midnight') {
+      root.style.setProperty('--color-bg', '#000000');
+      root.style.setProperty('--color-text', '#e5e5e5');
+      root.style.setProperty('--color-sub', '#404040');
+    } else if (settings.siteTheme === 'terminal') {
+      root.style.setProperty('--color-bg', '#0c0c0c');
+      root.style.setProperty('--color-text', settings.themeColor);
+      root.style.setProperty('--color-sub', '#2a2a2a');
+    }
+    if (settings.caretSpeed === 'fast') root.style.setProperty('--caret-speed', '0.5s');
+    else if (settings.caretSpeed === 'slow') root.style.setProperty('--caret-speed', '1.5s');
+    else root.style.setProperty('--caret-speed', '1s');
+  }, [settings]);
   
   // Auth State
   const [user, setUser] = useState<UserData | null>(() => {
@@ -182,6 +246,39 @@ export default function App() {
   const [profileSuccess, setProfileSuccess] = useState('');
   
   const inputRef = useRef<HTMLInputElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  const playKeystrokeSound = () => {
+    if (settings.keySounds === 'none') return;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      if (settings.keySounds === 'click') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.05);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+      } else if (settings.keySounds === 'beep') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, ctx.currentTime);
+        gain.gain.setValueAtTime(0.05, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+      }
+      
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.05);
+    } catch (e) {}
+  };
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastHistoryTimeRef = useRef<number>(0);
   const userInputRef = useRef(userInput);
@@ -196,7 +293,12 @@ export default function App() {
 
   // Initialize words
   const initTest = () => {
-    const shuffled = [...WORDS].sort(() => Math.random() - 0.5);
+    let wordList = WORDS_EN;
+    if (settings.language === 'es') wordList = WORDS_ES;
+    if (settings.language === 'fr') wordList = WORDS_FR;
+    if (settings.language === 'de') wordList = WORDS_DE;
+    
+    const shuffled = [...wordList].sort(() => Math.random() - 0.5);
     setWords(shuffled.slice(0, 100)); // Load 100 words initially
     setUserInput('');
     setState('idle');
@@ -215,7 +317,7 @@ export default function App() {
 
   useEffect(() => {
     initTest();
-  }, [mode, timeLimit, wordLimit]);
+  }, [mode, timeLimit, wordLimit, settings.language]);
 
   // Focus input on any keypress or click
   useEffect(() => {
@@ -520,6 +622,7 @@ export default function App() {
     let newCorrectKeystrokes = correctKeystrokes;
 
     if (val.length > userInput.length) {
+      playKeystrokeSound();
       newKeystrokes++;
       setKeystrokes(newKeystrokes);
       if (val[val.length - 1] === targetText[val.length - 1]) {
@@ -575,10 +678,34 @@ export default function App() {
     localStorage.removeItem('swifttype_user');
   };
 
+  const [paceIndex, setPaceIndex] = useState(0);
+
+  useEffect(() => {
+    if (state === 'running' && settings.paceCaret !== 'none') {
+      const charsPerSecond = (settings.paceCaretSpeed * 5) / 60;
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() - (startTime || Date.now())) / 1000;
+        setPaceIndex(Math.floor(elapsed * charsPerSecond));
+      }, 100);
+      return () => clearInterval(interval);
+    } else {
+      setPaceIndex(0);
+    }
+  }, [state, startTime, settings.paceCaret, settings.paceCaretSpeed]);
+
   // Rendering logic for words
   const renderWords = useMemo(() => {
+    const getCaretClass = (style: string) => {
+      if (style === 'block') return "absolute left-0 top-0 w-full h-[100%] bg-main/50";
+      if (style === 'underline') return "absolute left-0 bottom-0 w-full h-[2px] bg-main";
+      return "absolute -left-[1px] top-[10%] w-[2px] h-[80%] bg-main shadow-[0_0_8px_var(--color-main)]";
+    };
+
     return (
-      <div className="relative text-2xl leading-relaxed tracking-tight select-none h-[140px] overflow-hidden font-mono">
+      <div 
+        className="relative leading-relaxed tracking-tight select-none h-[140px] overflow-hidden font-mono"
+        style={{ fontSize: `${settings.fontSize}rem` }}
+      >
         <div className="flex flex-wrap gap-x-[0.3em] gap-y-2">
           {words.map((word, wordIdx) => {
             const wordStartIdx = words.slice(0, wordIdx).join(' ').length + (wordIdx > 0 ? 1 : 0);
@@ -606,8 +733,15 @@ export default function App() {
                       {isCurrent && (
                         <motion.div 
                           layoutId="caret"
-                          className="absolute -left-[1px] top-[10%] w-[2px] h-[80%] bg-main caret-blink shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                          className={cn(getCaretClass(settings.caretStyle), "caret-blink")}
+                          transition={settings.smoothCaret ? { type: 'spring', stiffness: 500, damping: 30 } : { duration: 0 }}
+                        />
+                      )}
+                      {settings.paceCaret !== 'none' && absoluteIdx === paceIndex && (
+                        <motion.div 
+                          layoutId="paceCaret"
+                          className={cn(getCaretClass(settings.paceCaret), "opacity-50")}
+                          transition={{ type: 'tween', duration: 0.1 }}
                         />
                       )}
                       {char}
@@ -617,13 +751,20 @@ export default function App() {
                 {wordIdx < words.length - 1 && (
                   <span className={cn(
                     "transition-all duration-150 relative",
-                    userInput.length > wordEndIdx ? (userInput[wordEndIdx] === ' ' ? 'text-sub/40' : 'bg-error/20 text-error') : 'text-sub/40'
+                    userInput.length > wordEndIdx ? (userInput[wordEndIdx] === ' ' ? 'text-sub/40' : 'bg-error/20 text-error') : 'text-sub/40',
                   )}>
                     {userInput.length === wordEndIdx && (
                        <motion.div 
                         layoutId="caret"
-                        className="absolute -left-[1px] top-[10%] w-[2px] h-[80%] bg-main caret-blink shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn(getCaretClass(settings.caretStyle), "caret-blink")}
+                        transition={settings.smoothCaret ? { type: 'spring', stiffness: 500, damping: 30 } : { duration: 0 }}
+                      />
+                    )}
+                    {settings.paceCaret !== 'none' && wordEndIdx === paceIndex && (
+                      <motion.div 
+                        layoutId="paceCaret"
+                        className={cn(getCaretClass(settings.paceCaret), "opacity-50")}
+                        transition={{ type: 'tween', duration: 0.1 }}
                       />
                     )}
                     &nbsp;
@@ -632,6 +773,51 @@ export default function App() {
               </span>
             );
           })}
+        </div>
+      </div>
+    );
+  }, [words, userInput, settings, paceIndex]);
+
+  const renderKeymap = useCallback(() => {
+    const rows = [
+      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+      ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+      ['z', 'x', 'c', 'v', 'b', 'n', 'm']
+    ];
+
+    const nextChar = words.join(' ')[userInput.length]?.toLowerCase();
+
+    return (
+      <div className="flex flex-col gap-2 items-center opacity-50 pointer-events-none select-none">
+        {rows.map((row, rowIdx) => (
+          <div key={rowIdx} className="flex gap-2">
+            {row.map(key => {
+              const isNext = key === nextChar;
+              return (
+                <div
+                  key={key}
+                  className={cn(
+                    "w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold uppercase transition-all duration-200",
+                    isNext 
+                      ? "bg-main text-bg shadow-[0_0_15px_var(--color-main)] scale-110" 
+                      : "bg-white/5 text-sub border border-white/10"
+                  )}
+                >
+                  {key}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div 
+          className={cn(
+            "h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all duration-200",
+            nextChar === ' ' 
+              ? "bg-main text-bg shadow-[0_0_15px_var(--color-main)] scale-105 w-64" 
+              : "bg-white/5 text-sub border border-white/10 w-48"
+          )}
+        >
+          SPACE
         </div>
       </div>
     );
@@ -687,7 +873,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center px-4 py-12 max-w-6xl mx-auto">
+    <div className={cn("min-h-screen flex flex-col items-center px-4 py-12 max-w-6xl mx-auto", settings.fontFamily)}>
       {/* Header */}
       <header className="w-full flex justify-between items-center mb-20 bg-bg/80 backdrop-blur-md sticky top-0 z-50 py-4 border-b border-white/5">
         <div className="flex items-center gap-4 group cursor-pointer" onClick={() => { setView('test'); initTest(); }}>
@@ -700,6 +886,7 @@ export default function App() {
         <nav className="flex gap-8 text-sub text-sm font-medium items-center">
           <button onClick={() => setView('test')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'test' && "text-main")}><Keyboard size={16} /> Test</button>
           <button onClick={() => { setView('leaderboard'); fetchLeaderboard(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'leaderboard' && "text-main")}><Trophy size={16} /> Leaderboard</button>
+          <button onClick={() => setView('settings')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'settings' && "text-main")}><Sliders size={16} /> Settings</button>
           {user?.is_admin && (
             <button onClick={() => { setView('admin'); fetchAdminUsers(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'admin' && "text-main")}><Settings size={16} /> Admin</button>
           )}
@@ -797,6 +984,13 @@ export default function App() {
                   <input ref={inputRef} type="text" className="absolute opacity-0 pointer-events-none" value={userInput} onChange={handleInputChange} autoFocus />
                   {renderWords}
                 </div>
+
+                {/* Keymap */}
+                {settings.showKeymap && (
+                  <div className="mt-12 w-full max-w-3xl mx-auto">
+                    {renderKeymap()}
+                  </div>
+                )}
 
                 {/* Announcements */}
                 {announcements.length > 0 && state === 'idle' && (
@@ -1209,6 +1403,367 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          ) : view === 'settings' ? (
+            <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-3xl">
+              <div className="flex items-center gap-4 mb-12">
+                <div className="p-3 bg-main/10 rounded-2xl border border-main/20">
+                  <Sliders className="w-8 h-8 text-main" />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight text-text">Settings</h2>
+                  <p className="text-sub text-sm">Customize your typing experience</p>
+                </div>
+              </div>
+
+              <div className="space-y-8">
+                {/* Theme Color */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Theme Color</h3>
+                  <div className="flex gap-4">
+                    {[
+                      { name: 'Emerald', value: '#10b981' },
+                      { name: 'Cyberpunk', value: '#f43f5e' },
+                      { name: 'Ocean', value: '#0ea5e9' },
+                      { name: 'Amethyst', value: '#a855f7' },
+                      { name: 'Amber', value: '#f59e0b' },
+                    ].map(color => (
+                      <button
+                        key={color.value}
+                        onClick={() => setSettings(s => ({ ...s, themeColor: color.value }))}
+                        className={cn(
+                          "w-12 h-12 rounded-full border-2 transition-transform hover:scale-110",
+                          settings.themeColor === color.value ? "border-white scale-110" : "border-transparent"
+                        )}
+                        style={{ backgroundColor: color.value }}
+                        title={color.name}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Site Theme */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Site Theme</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { name: 'Dark', value: 'dark' },
+                      { name: 'Light', value: 'light' },
+                      { name: 'Midnight', value: 'midnight' },
+                      { name: 'Terminal', value: 'terminal' },
+                    ].map(theme => (
+                      <button
+                        key={theme.value}
+                        onClick={() => setSettings(s => ({ ...s, siteTheme: theme.value as any }))}
+                        className={cn(
+                          "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                          settings.siteTheme === theme.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                        )}
+                      >
+                        {theme.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Language */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Language</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { name: 'English', value: 'en' },
+                      { name: 'Spanish', value: 'es' },
+                      { name: 'French', value: 'fr' },
+                      { name: 'German', value: 'de' },
+                    ].map(lang => (
+                      <button
+                        key={lang.value}
+                        onClick={() => setSettings(s => ({ ...s, language: lang.value as any }))}
+                        className={cn(
+                          "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                          settings.language === lang.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                        )}
+                      >
+                        {lang.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Font Size */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-text">Font Size</h3>
+                    <span className="text-main font-mono">{settings.fontSize}rem</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="3" 
+                    step="0.1" 
+                    value={settings.fontSize}
+                    onChange={(e) => setSettings(s => ({ ...s, fontSize: parseFloat(e.target.value) }))}
+                    className="w-full accent-main"
+                  />
+                </div>
+
+                {/* Caret Settings */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-8">
+                  <div>
+                    <h3 className="text-lg font-bold text-text mb-4">Caret Style</h3>
+                    <div className="grid grid-cols-3 gap-4">
+                      {[
+                        { name: 'Line', value: 'line' },
+                        { name: 'Block', value: 'block' },
+                        { name: 'Underline', value: 'underline' },
+                      ].map(style => (
+                        <button
+                          key={style.value}
+                          onClick={() => setSettings(s => ({ ...s, caretStyle: style.value as any }))}
+                          className={cn(
+                            "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                            settings.caretStyle === style.value 
+                              ? "bg-main/20 border-main/50 text-main" 
+                              : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                          )}
+                        >
+                          {style.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-lg font-bold text-text mb-4">Caret Speed</h3>
+                    <div className="grid grid-cols-3 gap-4">
+                      {[
+                        { name: 'Slow', value: 'slow' },
+                        { name: 'Normal', value: 'normal' },
+                        { name: 'Fast', value: 'fast' },
+                      ].map(speed => (
+                        <button
+                          key={speed.value}
+                          onClick={() => setSettings(s => ({ ...s, caretSpeed: speed.value as any }))}
+                          className={cn(
+                            "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                            settings.caretSpeed === speed.value 
+                              ? "bg-main/20 border-main/50 text-main" 
+                              : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                          )}
+                        >
+                          {speed.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pace Caret */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-8">
+                  <div>
+                    <h3 className="text-lg font-bold text-text mb-4">Pace Caret</h3>
+                    <p className="text-sub text-sm mb-4">A ghost caret that types at a set speed to help you pace yourself.</p>
+                    <div className="grid grid-cols-3 gap-4">
+                      {[
+                        { name: 'Off', value: 'none' },
+                        { name: 'Line', value: 'line' },
+                        { name: 'Block', value: 'block' },
+                      ].map(style => (
+                        <button
+                          key={style.value}
+                          onClick={() => setSettings(s => ({ ...s, paceCaret: style.value as any }))}
+                          className={cn(
+                            "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                            settings.paceCaret === style.value 
+                              ? "bg-main/20 border-main/50 text-main" 
+                              : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                          )}
+                        >
+                          {style.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {settings.paceCaret !== 'none' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-text">Pace Speed</h3>
+                        <span className="text-main font-mono">{settings.paceCaretSpeed} WPM</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="10" 
+                        max="200" 
+                        step="5" 
+                        value={settings.paceCaretSpeed}
+                        onChange={(e) => setSettings(s => ({ ...s, paceCaretSpeed: parseInt(e.target.value) }))}
+                        className="w-full accent-main"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Key Sounds */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Key Sounds</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    {[
+                      { name: 'Off', value: 'none' },
+                      { name: 'Click', value: 'click' },
+                      { name: 'Beep', value: 'beep' },
+                    ].map(sound => (
+                      <button
+                        key={sound.value}
+                        onClick={() => setSettings(s => ({ ...s, keySounds: sound.value as any }))}
+                        className={cn(
+                          "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                          settings.keySounds === sound.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                        )}
+                      >
+                        {sound.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Font Family */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Font Family</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    {[
+                      { name: 'Sans', value: 'font-sans', class: 'font-sans' },
+                      { name: 'Mono', value: 'font-mono', class: 'font-mono' },
+                      { name: 'Serif', value: 'font-serif', class: 'font-serif' },
+                    ].map(font => (
+                      <button
+                        key={font.value}
+                        onClick={() => setSettings(s => ({ ...s, fontFamily: font.value }))}
+                        className={cn(
+                          "py-4 px-6 rounded-xl border transition-all text-center",
+                          settings.fontFamily === font.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text",
+                          font.class
+                        )}
+                      >
+                        <span className="text-xl">{font.name}</span>
+                        <p className="text-xs mt-2 opacity-70">The quick brown fox</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-text">Smooth Caret</h3>
+                      <p className="text-sub text-sm">Animate the caret moving between letters</p>
+                    </div>
+                    <button 
+                      onClick={() => setSettings(s => ({ ...s, smoothCaret: !s.smoothCaret }))}
+                      className={cn(
+                        "w-14 h-8 rounded-full transition-colors relative",
+                        settings.smoothCaret ? "bg-main" : "bg-white/10"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-6 h-6 bg-white rounded-full absolute top-1 transition-transform",
+                        settings.smoothCaret ? "translate-x-7" : "translate-x-1"
+                      )} />
+                    </button>
+                  </div>
+
+                  <div className="h-px bg-white/10 w-full" />
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-text">Show Keymap</h3>
+                      <p className="text-sub text-sm">Display a visual keyboard layout</p>
+                    </div>
+                    <button 
+                      onClick={() => setSettings(s => ({ ...s, showKeymap: !s.showKeymap }))}
+                      className={cn(
+                        "w-14 h-8 rounded-full transition-colors relative",
+                        settings.showKeymap ? "bg-main" : "bg-white/10"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-6 h-6 bg-white rounded-full absolute top-1 transition-transform",
+                        settings.showKeymap ? "translate-x-7" : "translate-x-1"
+                      )} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dangerzone */}
+                {user && (
+                  <div className="border border-error/30 rounded-3xl p-8 space-y-6 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-error/5 pointer-events-none" />
+                    <h3 className="text-lg font-bold text-error">Danger Zone</h3>
+                    
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-text">Reset Stats</h4>
+                        <p className="text-sub text-sm">Permanently delete all your typing history.</p>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          if (confirm("Are you sure you want to reset your stats? This cannot be undone.")) {
+                            try {
+                              await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/stats`, {
+                                method: 'DELETE',
+                                headers: { 'x-user-id': user.id.toString() }
+                              });
+                              alert("Stats reset successfully.");
+                            } catch (e) {
+                              alert("Failed to reset stats.");
+                            }
+                          }
+                        }}
+                        className="px-4 py-2 bg-error/10 text-error hover:bg-error/20 rounded-xl font-bold transition-colors"
+                      >
+                        Reset Stats
+                      </button>
+                    </div>
+
+                    <div className="h-px bg-error/20 w-full" />
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-text">Delete Account</h4>
+                        <p className="text-sub text-sm">Permanently delete your account and all data.</p>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          if (confirm("Are you sure you want to delete your account? This cannot be undone.")) {
+                            try {
+                              await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}`, {
+                                method: 'DELETE',
+                                headers: { 'x-user-id': user.id.toString() }
+                              });
+                              logout();
+                              setView('test');
+                            } catch (e) {
+                              alert("Failed to delete account.");
+                            }
+                          }
+                        }}
+                        className="px-4 py-2 bg-error text-white hover:bg-error/90 rounded-xl font-bold transition-colors"
+                      >
+                        Delete Account
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : (

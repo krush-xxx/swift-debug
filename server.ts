@@ -145,6 +145,31 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/users/:id/stats", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    if (!userId || userId.toString() !== req.params.id) return res.status(401).json({ error: "Unauthorized" });
+    
+    try {
+      db.prepare("DELETE FROM scores WHERE user_id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to reset stats" });
+    }
+  });
+
+  app.delete("/api/users/:id", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    if (!userId || userId.toString() !== req.params.id) return res.status(401).json({ error: "Unauthorized" });
+    
+    try {
+      db.prepare("DELETE FROM scores WHERE user_id = ?").run(req.params.id);
+      db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete account" });
+    }
+  });
+
   // Score Endpoints
   app.post("/api/scores", (req, res) => {
     const { user_id, wpm, accuracy, mode } = req.body;
