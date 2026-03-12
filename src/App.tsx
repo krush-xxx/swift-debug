@@ -1783,34 +1783,6 @@ export default function App() {
                         Reset Stats
                       </button>
                     </div>
-
-                    <div className="h-px bg-error/20 w-full" />
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-bold text-text">Delete Account</h4>
-                        <p className="text-sub text-sm">Permanently delete your account and all data.</p>
-                      </div>
-                      <button 
-                        onClick={async () => {
-                          if (confirm("Are you sure you want to delete your account? This cannot be undone.")) {
-                            try {
-                              await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}`, {
-                                method: 'DELETE',
-                                headers: { 'x-user-id': user.id.toString() }
-                              });
-                              logout();
-                              setView('test');
-                            } catch (e) {
-                              alert("Failed to delete account.");
-                            }
-                          }
-                        }}
-                        className="px-4 py-2 bg-error text-white hover:bg-error/90 rounded-xl font-bold transition-colors"
-                      >
-                        Delete Account
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
