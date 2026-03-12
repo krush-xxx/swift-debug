@@ -53,6 +53,7 @@ interface AppSettings {
   paceCaretSpeed: number;
   keySounds: 'none' | 'click' | 'beep';
   showKeymap: boolean;
+  restartKey: 'tab' | 'esc' | 'alt' | 'none';
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -68,6 +69,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   paceCaretSpeed: 60,
   keySounds: 'none',
   showKeymap: false,
+  restartKey: 'tab',
 };
 
 interface HistoryPoint {
@@ -318,6 +320,26 @@ export default function App() {
   useEffect(() => {
     initTest();
   }, [mode, timeLimit, wordLimit, settings.language]);
+
+  // Restart Key Logic
+  useEffect(() => {
+    const handleRestartKey = (e: KeyboardEvent) => {
+      if (settings.restartKey === 'none') return;
+      if (
+        (settings.restartKey === 'tab' && e.key === 'Tab') ||
+        (settings.restartKey === 'esc' && e.key === 'Escape') ||
+        (settings.restartKey === 'alt' && e.key === 'Alt')
+      ) {
+        e.preventDefault();
+        initTest();
+        if (view === 'test' && !showAuthModal) {
+          inputRef.current?.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleRestartKey);
+    return () => window.removeEventListener('keydown', handleRestartKey);
+  }); // Re-bind on every render to ensure initTest is fresh
 
   // Focus input on any keypress or click
   useEffect(() => {
@@ -1009,7 +1031,7 @@ export default function App() {
 
                 {/* Reset Button */}
                 <div className="mt-16 flex justify-center">
-                  <button onClick={initTest} className="group relative p-4 rounded-2xl bg-white/5 hover:bg-main/10 border border-white/10 hover:border-main/20 transition-all" title="Restart (Tab + Enter)">
+                  <button onClick={initTest} className="group relative p-4 rounded-2xl bg-white/5 hover:bg-main/10 border border-white/10 hover:border-main/20 transition-all" title={`Restart (${settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={24} className="text-sub group-hover:text-main group-hover:rotate-180 transition-all duration-500" />
                   </button>
                 </div>
@@ -1040,7 +1062,7 @@ export default function App() {
                       <div className="text-error text-xl font-bold">{errorCount}</div>
                     </div>
                   </div>
-                  <button onClick={initTest} className="mt-4 bg-main text-bg font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-main/20">
+                  <button onClick={initTest} className="mt-4 bg-main text-bg font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-main/20" title={`Restart (${settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={20} /> Try Again
                   </button>
                 </div>
@@ -1629,6 +1651,33 @@ export default function App() {
                         )}
                       >
                         {sound.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Restart Key */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Restart Test Key</h3>
+                  <p className="text-sub text-sm mb-4">Quickly restart the test using a keyboard shortcut.</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { name: 'Tab', value: 'tab' },
+                      { name: 'Escape', value: 'esc' },
+                      { name: 'Alt', value: 'alt' },
+                      { name: 'Off', value: 'none' },
+                    ].map(key => (
+                      <button
+                        key={key.value}
+                        onClick={() => setSettings(s => ({ ...s, restartKey: key.value as any }))}
+                        className={cn(
+                          "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                          settings.restartKey === key.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                        )}
+                      >
+                        {key.name}
                       </button>
                     ))}
                   </div>
