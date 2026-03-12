@@ -314,6 +314,19 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.put("/api/admin/announce/:id", isAdmin, (req, res) => {
+    const { content } = req.body;
+    const stmt = db.prepare("UPDATE announcements SET content = ? WHERE id = ?");
+    stmt.run(content, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/admin/announce/:id", isAdmin, (req, res) => {
+    const stmt = db.prepare("DELETE FROM announcements WHERE id = ?");
+    stmt.run(req.params.id);
+    res.json({ success: true });
+  });
+
   app.get("/api/announcements", (req, res) => {
     const announcements = db.prepare("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 5").all();
     res.json(announcements);

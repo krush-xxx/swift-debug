@@ -237,6 +237,8 @@ export default function App() {
   const [banDuration, setBanDuration] = useState("permanent");
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementInput, setAnnouncementInput] = useState('');
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<number | null>(null);
+  const [showPastAnnouncements, setShowPastAnnouncements] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   
   // Profile State
@@ -592,8 +594,12 @@ export default function App() {
     e.preventDefault();
     if (!user?.is_admin || !announcementInput.trim()) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/admin/announce`, {
-        method: 'POST',
+      const url = editingAnnouncementId 
+        ? `${import.meta.env.VITE_API_URL || ''}/api/admin/announce/${editingAnnouncementId}`
+        : `${import.meta.env.VITE_API_URL || ''}/api/admin/announce`;
+        
+      const res = await fetch(url, {
+        method: editingAnnouncementId ? 'PUT' : 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'x-admin-id': user.id.toString()
@@ -602,10 +608,32 @@ export default function App() {
       });
       if (res.ok) {
         setAnnouncementInput('');
+        setEditingAnnouncementId(null);
         fetchAnnouncements();
       }
     } catch (err) {
-      console.error("Failed to post announcement", err);
+      console.error("Failed to save announcement", err);
+    }
+  };
+
+  const handleDeleteAnnouncement = async (id: number) => {
+    if (!user?.is_admin || !confirm("Are you sure you want to delete this announcement?")) return;
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/admin/announce/${id}`, {
+        method: 'DELETE',
+        headers: { 
+          'x-admin-id': user.id.toString()
+        }
+      });
+      if (res.ok) {
+        if (editingAnnouncementId === id) {
+          setEditingAnnouncementId(null);
+          setAnnouncementInput('');
+        }
+        fetchAnnouncements();
+      }
+    } catch (err) {
+      console.error("Failed to delete announcement", err);
     }
   };
 
@@ -680,18 +708,26 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(authForm)
       });
-      const data = await res.json();
       
-      if (res.ok) {
-        setUser(data);
-        localStorage.setItem('swifttype_user', JSON.stringify(data));
-        setShowAuthModal(false);
-        setAuthForm({ username: '', password: '' });
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        if (res.ok) {
+          setUser(data);
+          localStorage.setItem('swifttype_user', JSON.stringify(data));
+          setShowAuthModal(false);
+          setAuthForm({ username: '', password: '' });
+        } else {
+          setAuthError(data.error);
+        }
       } else {
-        setAuthError(data.error);
+        const text = await res.text();
+        console.error("Non-JSON response:", text);
+        setAuthError(`Server error: ${res.status}`);
       }
-    } catch (err) {
-      setAuthError("Connection error");
+    } catch (err: any) {
+      console.error("Auth error:", err);
+      setAuthError(`Connection error: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -961,6 +997,19 @@ export default function App() {
                 exit={{ opacity: 0, scale: 1.02 }}
                 className="w-full max-w-4xl"
               >
+                {/* Announcements */}
+                {announcements.length > 0 && state === 'idle' && (
+                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-12 w-full max-w-2xl mx-auto space-y-4">
+                    <div className="flex items-center gap-2 text-sub text-[10px] font-bold uppercase tracking-widest mb-2 px-4">
+                      <Info size={12} className="text-main" /> Latest Announcement
+                    </div>
+                    <div className="p-4 rounded-2xl bg-main/10 border border-main/20 text-sm text-text leading-relaxed shadow-lg shadow-main/5">
+                      {announcements[0].content}
+                      <div className="text-[10px] opacity-60 mt-2 font-mono">{new Date(announcements[0].created_at).toLocaleString()}</div>
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* Controls */}
                 <div className="flex justify-center mb-12">
                   <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-1.5 flex gap-2 border border-white/10 shadow-xl">
@@ -1014,27 +1063,24 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Announcements */}
-                {announcements.length > 0 && state === 'idle' && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-12 w-full max-w-2xl mx-auto space-y-4">
-                    <div className="flex items-center gap-2 text-sub text-[10px] font-bold uppercase tracking-widest mb-2 px-4">
-                      <Info size={12} className="text-main" /> Announcements
-                    </div>
-                    {announcements.map(ann => (
-                      <div key={ann.id} className="p-4 rounded-2xl bg-white/5 border border-white/10 text-sm text-sub leading-relaxed">
-                        {ann.content}
-                        <div className="text-[10px] opacity-40 mt-2">{new Date(ann.created_at).toLocaleString()}</div>
-                      </div>
-                    ))}
-                  </motion.div>
-                )}
-
                 {/* Reset Button */}
                 <div className="mt-16 flex justify-center">
                   <button onClick={initTest} className="group relative p-4 rounded-2xl bg-white/5 hover:bg-main/10 border border-white/10 hover:border-main/20 transition-all" title={`Restart (${settings.restartKey && settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={24} className="text-sub group-hover:text-main group-hover:rotate-180 transition-all duration-500" />
                   </button>
                 </div>
+
+                {/* Past Announcements Button */}
+                {announcements.length > 1 && state === 'idle' && (
+                  <div className="mt-8 flex justify-center">
+                    <button 
+                      onClick={() => setShowPastAnnouncements(true)}
+                      className="text-sub hover:text-text text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-2"
+                    >
+                      <Info size={14} /> View Past Announcements
+                    </button>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div key="results" initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} className="w-full grid grid-cols-1 lg:grid-cols-4 gap-10">
@@ -1173,7 +1219,7 @@ export default function App() {
                 {/* Announcement Section */}
                 <div className="lg:col-span-1 space-y-6">
                   <div className="p-8 rounded-3xl bg-white/5 border border-white/10 shadow-xl">
-                    <h3 className="text-lg font-bold text-text mb-6">Post Announcement</h3>
+                    <h3 className="text-lg font-bold text-text mb-6">{editingAnnouncementId ? 'Edit Announcement' : 'Post Announcement'}</h3>
                     <form onSubmit={handleAnnounce} className="space-y-4">
                       <textarea
                         value={announcementInput}
@@ -1181,11 +1227,60 @@ export default function App() {
                         placeholder="Type announcement here..."
                         className="w-full h-32 bg-white/5 border border-white/10 rounded-2xl p-4 text-sm text-text focus:outline-none focus:border-main/50 transition-all resize-none"
                       />
-                      <button type="submit" className="w-full bg-main text-bg font-black py-4 rounded-xl shadow-lg shadow-main/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
-                        Post Announcement
-                      </button>
+                      <div className="flex gap-2">
+                        <button type="submit" className="flex-1 bg-main text-bg font-black py-4 rounded-xl shadow-lg shadow-main/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                          {editingAnnouncementId ? 'Save Changes' : 'Post Announcement'}
+                        </button>
+                        {editingAnnouncementId && (
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setEditingAnnouncementId(null);
+                              setAnnouncementInput('');
+                            }}
+                            className="px-4 bg-white/10 text-text font-bold rounded-xl hover:bg-white/20 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </form>
                   </div>
+
+                  {announcements.length > 0 && (
+                    <div className="p-8 rounded-3xl bg-white/5 border border-white/10 shadow-xl">
+                      <h3 className="text-lg font-bold text-text mb-6">Manage Announcements</h3>
+                      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                        {announcements.map(ann => (
+                          <div key={ann.id} className="p-4 rounded-2xl bg-white/5 border border-white/10 text-sm text-sub relative group">
+                            <div className="pr-16 leading-relaxed">
+                              {ann.content}
+                            </div>
+                            <div className="text-[10px] opacity-40 mt-2">{new Date(ann.created_at).toLocaleString()}</div>
+                            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button 
+                                onClick={() => {
+                                  setEditingAnnouncementId(ann.id);
+                                  setAnnouncementInput(ann.content);
+                                }}
+                                className="p-2 bg-white/10 rounded-lg hover:bg-white/20 text-text transition-colors"
+                                title="Edit"
+                              >
+                                <Settings size={14} />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteAnnouncement(ann.id)}
+                                className="p-2 bg-error/10 rounded-lg hover:bg-error/20 text-error transition-colors"
+                                title="Delete"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* User Management Section */}
@@ -1871,6 +1966,32 @@ export default function App() {
 
       {/* Auth Modal */}
       <AnimatePresence>
+        {showPastAnnouncements && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowPastAnnouncements(false)} className="absolute inset-0 bg-bg/80 backdrop-blur-xl" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative w-full max-w-2xl bg-white/5 border border-white/10 rounded-[2.5rem] p-10 shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
+              <div className="absolute top-0 left-0 w-full h-2 bg-main" />
+              <button onClick={() => setShowPastAnnouncements(false)} className="absolute top-6 right-6 text-sub hover:text-text transition-colors"><X size={24} /></button>
+              
+              <div className="mb-10">
+                <h2 className="text-3xl font-black tracking-tight text-text mb-2 flex items-center gap-3">
+                  <Info className="text-main" /> Past Announcements
+                </h2>
+                <p className="text-sub text-sm">Catch up on previous updates and news.</p>
+              </div>
+
+              <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                {announcements.slice(1).map(ann => (
+                  <div key={ann.id} className="p-6 rounded-3xl bg-white/5 border border-white/10 text-sm text-text leading-relaxed shadow-lg">
+                    {ann.content}
+                    <div className="text-[10px] opacity-60 mt-4 font-mono text-sub">{new Date(ann.created_at).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {showAuthModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowAuthModal(false)} className="absolute inset-0 bg-bg/80 backdrop-blur-xl" />
