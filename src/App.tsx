@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   RefreshCw, 
+  RotateCcw,
   Settings, 
   BarChart2, 
   Keyboard, 
@@ -304,6 +305,22 @@ export default function App() {
     
     const shuffled = [...wordList].sort(() => Math.random() - 0.5);
     setWords(shuffled.slice(0, 100)); // Load 100 words initially
+    setUserInput('');
+    setState('idle');
+    setTimeLeft(timeLimit);
+    setStartTime(null);
+    setHistory([]);
+    setWpm(0);
+    setAccuracy(0);
+    setRawWpm(0);
+    setErrorCount(0);
+    setKeystrokes(0);
+    setCorrectKeystrokes(0);
+    lastHistoryTimeRef.current = 0;
+    if (timerRef.current) clearInterval(timerRef.current);
+  };
+
+  const repeatTest = () => {
     setUserInput('');
     setState('idle');
     setTimeLeft(timeLimit);
@@ -1110,6 +1127,9 @@ export default function App() {
                   </div>
                   <button onClick={initTest} className="mt-4 bg-main text-bg font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-main/20" title={`Restart (${settings.restartKey && settings.restartKey !== 'none' ? settings.restartKey.toUpperCase() : 'Click'})`}>
                     <RefreshCw size={20} /> Try Again
+                  </button>
+                  <button onClick={repeatTest} className="mt-2 bg-white/5 text-text font-bold py-4 rounded-2xl flex items-center justify-center gap-3 border border-white/10 transition-all hover:bg-white/10 hover:scale-[1.02] active:scale-[0.98]" title="Repeat with same words">
+                    <RotateCcw size={18} /> Repeat Test
                   </button>
                 </div>
 
