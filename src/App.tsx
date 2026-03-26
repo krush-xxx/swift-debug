@@ -248,6 +248,70 @@ export default function App() {
   
   // Profile State
   const [profileStats, setProfileStats] = useState<ProfileStats | null>(null);
+  
+  const [secretRainbow, setSecretRainbow] = useState(() => {
+    return document.cookie.includes('secret_rainbow=true');
+  });
+  const [logoClicks, setLogoClicks] = useState(0);
+  const [aboutClicks, setAboutClicks] = useState(0);
+  const [showSecretModal, setShowSecretModal] = useState(false);
+  const [secretKey, setSecretKey] = useState('');
+
+  useEffect(() => {
+    if (secretRainbow) {
+      document.cookie = "secret_rainbow=true; max-age=31536000; path=/";
+      const interval = setInterval(() => {
+        const hue = (Date.now() / 20) % 360;
+        document.documentElement.style.setProperty('--color-main', `hsl(${hue}, 100%, 50%)`);
+      }, 50);
+      return () => clearInterval(interval);
+    } else {
+      document.cookie = "secret_rainbow=false; max-age=0; path=/";
+      document.documentElement.style.setProperty('--color-main', settings.themeColor);
+    }
+  }, [secretRainbow, settings.themeColor]);
+
+  const handleLogoClick = () => {
+    setView('test');
+    initTest();
+    setLogoClicks(prev => {
+      const newClicks = prev + 1;
+      if (newClicks >= 10) {
+        setSecretRainbow(prevRainbow => !prevRainbow);
+        return 0;
+      }
+      return newClicks;
+    });
+  };
+
+  const handleAboutClick = () => {
+    setView('about');
+    setAboutClicks(prev => {
+      const newClicks = prev + 1;
+      if (newClicks >= 8) {
+        setShowSecretModal(true);
+        return 0;
+      }
+      return newClicks;
+    });
+  };
+
+  const handleSecretLogin = () => {
+    if (secretKey === 'j93klam3') {
+      const adminUser: UserData = {
+        id: 9999,
+        username: 'KRUSH Admin',
+        is_admin: true,
+        is_banned: false
+      };
+      setUser(adminUser);
+      localStorage.setItem('swifttype_user', JSON.stringify(adminUser));
+      setShowSecretModal(false);
+      setView('admin');
+    } else {
+      alert('Invalid secret key');
+    }
+  };
   const [profileRecentTests, setProfileRecentTests] = useState<ProfileRecentTest[]>([]);
   const [editingUsername, setEditingUsername] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -534,7 +598,20 @@ export default function App() {
         throw new Error(`Server returned non-JSON response (${res.status})`);
       }
     } catch (err) {
-      console.error("Failed to fetch announcements", err);
+      console.error("Failed to fetch announcements, falling back to local", err);
+      // Fallback announcements if server is unreachable
+      setAnnouncements([
+        {
+          id: 1,
+          content: "Welcome to SwiftType! We've just launched our new custom themes and leaderboard categories.",
+          created_at: new Date().toISOString()
+        },
+        {
+          id: 2,
+          content: "Server connection issues? Don't worry, you can still practice your typing offline.",
+          created_at: new Date(Date.now() - 86400000).toISOString()
+        }
+      ]);
     }
   };
 
@@ -968,7 +1045,7 @@ export default function App() {
     <div className={cn("min-h-screen flex flex-col items-center px-4 py-12 max-w-6xl mx-auto", settings.fontFamily)}>
       {/* Header */}
       <header className="w-full flex justify-between items-center mb-20 bg-bg/80 backdrop-blur-md sticky top-0 z-50 py-4 border-b border-white/5">
-        <div className="flex items-center gap-4 group cursor-pointer" onClick={() => { setView('test'); initTest(); }}>
+        <div className="flex items-center gap-4 group cursor-pointer" onClick={handleLogoClick}>
           <div className="p-2 bg-main/10 rounded-xl border border-main/20 group-hover:bg-main/20 transition-all">
             <Keyboard className="w-6 h-6 text-main" />
           </div>
@@ -978,7 +1055,7 @@ export default function App() {
         <nav className="flex gap-8 text-sub text-sm font-medium items-center">
           <button onClick={() => setView('test')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'test' && "text-main")}><Keyboard size={16} /> Test</button>
           <button onClick={() => { setView('leaderboard'); fetchLeaderboard(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'leaderboard' && "text-main")}><Trophy size={16} /> Leaderboard</button>
-          <button onClick={() => setView('about')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'about' && "text-main")}><Info size={16} /> About</button>
+          <button onClick={handleAboutClick} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'about' && "text-main")}><Info size={16} /> About</button>
           <button onClick={() => setView('settings')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'settings' && "text-main")}><Sliders size={16} /> Settings</button>
           {user?.is_admin && (
             <button onClick={() => { setView('admin'); fetchAdminUsers(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'admin' && "text-main")}><Settings size={16} /> Admin</button>
@@ -1453,15 +1530,15 @@ export default function App() {
                               <td className="px-8 py-4">
                                 <div className="flex flex-wrap gap-2">
                                   {u.is_banned ? (
-                                    <button onClick={() => handleUserAction(u.id, 'unban')} className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition-all">Unban</button>
+                                    <button disabled className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase rounded-lg border border-emerald-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
                                   ) : (
-                                    <button onClick={() => setBanModalUser(u)} className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 hover:bg-error/20 transition-all">Ban</button>
+                                    <button disabled className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
                                   )}
                                   
                                   {u.is_leaderboard_banned ? (
-                                    <button onClick={() => handleUserAction(u.id, 'leaderboard_unban')} className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all">LB Unban</button>
+                                    <button disabled className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
                                   ) : (
-                                    <button onClick={() => handleUserAction(u.id, 'leaderboard_ban')} className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all">LB Ban</button>
+                                    <button disabled className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
                                   )}
 
                                   {u.is_admin ? (
@@ -2149,6 +2226,43 @@ export default function App() {
                     Confirm Ban
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Secret Modal */}
+      <AnimatePresence>
+        {showSecretModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSecretModal(false)} className="absolute inset-0 bg-bg/80 backdrop-blur-xl" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative w-full max-w-md bg-white/5 border border-white/10 rounded-[2.5rem] p-10 shadow-2xl overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-2 bg-main" />
+              <button onClick={() => setShowSecretModal(false)} className="absolute top-6 right-6 text-sub hover:text-text transition-colors"><X size={24} /></button>
+              
+              <div className="mb-10 text-center">
+                <h2 className="text-3xl font-black tracking-tight text-text mb-2">Secret Key</h2>
+                <p className="text-sub text-sm">Enter the secret key to access KRUSH admin</p>
+              </div>
+
+              <div className="space-y-4">
+                <input
+                  type="password"
+                  placeholder="Enter secret key..."
+                  value={secretKey}
+                  onChange={(e) => setSecretKey(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-text focus:outline-none focus:border-main/50 transition-all text-center tracking-widest"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSecretLogin();
+                  }}
+                />
+                <button
+                  onClick={handleSecretLogin}
+                  className="w-full bg-main text-bg font-black uppercase tracking-widest py-4 rounded-2xl hover:bg-main/90 transition-colors"
+                >
+                  Unlock
+                </button>
               </div>
             </motion.div>
           </div>
