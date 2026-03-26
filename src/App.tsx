@@ -39,10 +39,11 @@ function cn(...inputs: ClassValue[]) {
 
 type TestMode = 'time' | 'words';
 type TestState = 'idle' | 'running' | 'finished';
-type View = 'test' | 'leaderboard' | 'admin' | 'profile' | 'settings';
+type View = 'test' | 'leaderboard' | 'admin' | 'profile' | 'settings' | 'about';
 
 interface AppSettings {
   themeColor: string;
+  secondaryColor: string;
   siteTheme: 'dark' | 'light' | 'midnight' | 'terminal';
   fontFamily: string;
   fontSize: number;
@@ -59,6 +60,7 @@ interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   themeColor: '#10b981', // Emerald
+  secondaryColor: '#475569', // Slate
   siteTheme: 'dark',
   fontFamily: 'font-sans',
   fontSize: 1.5,
@@ -176,25 +178,26 @@ export default function App() {
     localStorage.setItem('swifttype_settings', JSON.stringify(settings));
     const root = document.documentElement;
     root.style.setProperty('--color-main', settings.themeColor);
+    root.style.setProperty('--color-secondary', settings.secondaryColor);
     root.style.setProperty('--color-caret', settings.themeColor);
     root.style.setProperty('--color-correct', settings.themeColor);
 
     if (settings.siteTheme === 'dark') {
       root.style.setProperty('--color-bg', '#0f172a');
       root.style.setProperty('--color-text', '#f8fafc');
-      root.style.setProperty('--color-sub', '#475569');
+      root.style.setProperty('--color-sub', settings.secondaryColor);
     } else if (settings.siteTheme === 'light') {
       root.style.setProperty('--color-bg', '#f8fafc');
       root.style.setProperty('--color-text', '#0f172a');
-      root.style.setProperty('--color-sub', '#94a3b8');
+      root.style.setProperty('--color-sub', settings.secondaryColor);
     } else if (settings.siteTheme === 'midnight') {
       root.style.setProperty('--color-bg', '#000000');
       root.style.setProperty('--color-text', '#e5e5e5');
-      root.style.setProperty('--color-sub', '#404040');
+      root.style.setProperty('--color-sub', settings.secondaryColor);
     } else if (settings.siteTheme === 'terminal') {
       root.style.setProperty('--color-bg', '#0c0c0c');
       root.style.setProperty('--color-text', settings.themeColor);
-      root.style.setProperty('--color-sub', '#2a2a2a');
+      root.style.setProperty('--color-sub', settings.secondaryColor);
     }
     if (settings.caretSpeed === 'fast') root.style.setProperty('--caret-speed', '0.5s');
     else if (settings.caretSpeed === 'slow') root.style.setProperty('--caret-speed', '1.5s');
@@ -229,6 +232,7 @@ export default function App() {
   
   // Leaderboard State
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardCategory, setLeaderboardCategory] = useState({ mode: 'time', limit: 30 });
   
   // Admin State
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
@@ -304,7 +308,8 @@ export default function App() {
     if (settings.language === 'de') wordList = WORDS_DE;
     
     const shuffled = [...wordList].sort(() => Math.random() - 0.5);
-    setWords(shuffled.slice(0, 100)); // Load 100 words initially
+    const count = mode === 'words' ? wordLimit : 100;
+    setWords(shuffled.slice(0, count)); 
     setUserInput('');
     setState('idle');
     setTimeLeft(timeLimit);
@@ -459,6 +464,13 @@ export default function App() {
 
   const submitScore = async () => {
     if (!user?.id) return;
+    
+    // Don't submit if it's a custom word count (not 10, 25, 50, 100) or custom time (not 15, 30, 60, 120)
+    const standardTimes = [15, 30, 60, 120];
+    const standardWords = [10, 25, 50, 100];
+    if (mode === 'time' && !standardTimes.includes(timeLimit)) return;
+    if (mode === 'words' && !standardWords.includes(wordLimit)) return;
+
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/scores`, {
         method: 'POST',
@@ -491,7 +503,7 @@ export default function App() {
 
   const fetchLeaderboard = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/leaderboard`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/leaderboard?mode=${leaderboardCategory.mode}&limit=${leaderboardCategory.limit}`);
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
@@ -504,6 +516,12 @@ export default function App() {
       console.error("Failed to fetch leaderboard", err);
     }
   };
+
+  useEffect(() => {
+    if (view === 'leaderboard') {
+      fetchLeaderboard();
+    }
+  }, [view, leaderboardCategory]);
 
   const fetchAnnouncements = async () => {
     try {
@@ -707,8 +725,7 @@ export default function App() {
     }
 
     if (mode === 'words') {
-      const typedWords = val.trim().split(/\s+/).length;
-      if (typedWords >= wordLimit && val.endsWith(' ')) {
+      if (val.length >= targetText.length) {
         finishTest();
       }
     }
@@ -961,6 +978,7 @@ export default function App() {
         <nav className="flex gap-8 text-sub text-sm font-medium items-center">
           <button onClick={() => setView('test')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'test' && "text-main")}><Keyboard size={16} /> Test</button>
           <button onClick={() => { setView('leaderboard'); fetchLeaderboard(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'leaderboard' && "text-main")}><Trophy size={16} /> Leaderboard</button>
+          <button onClick={() => setView('about')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'about' && "text-main")}><Info size={16} /> About</button>
           <button onClick={() => setView('settings')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'settings' && "text-main")}><Sliders size={16} /> Settings</button>
           {user?.is_admin && (
             <button onClick={() => { setView('admin'); fetchAdminUsers(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'admin' && "text-main")}><Settings size={16} /> Admin</button>
@@ -1040,6 +1058,21 @@ export default function App() {
                       )) : [10, 25, 50, 100].map(w => (
                         <button key={w} onClick={() => setWordLimit(w)} className={cn("w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center", wordLimit === w ? 'text-main bg-main/10 border border-main/20' : 'text-sub hover:text-text hover:bg-white/5')}>{w}</button>
                       ))}
+                      <button 
+                        onClick={() => {
+                          const val = prompt("Enter custom count:");
+                          if (val) {
+                            const n = parseInt(val);
+                            if (!isNaN(n) && n > 0) {
+                              if (mode === 'time') setTimeLimit(n);
+                              else setWordLimit(n);
+                            }
+                          }
+                        }} 
+                        className="text-sub hover:text-text text-[10px] font-bold uppercase tracking-widest px-2 transition-colors"
+                      >
+                        Custom
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1049,7 +1082,7 @@ export default function App() {
                   <div className="flex flex-col">
                     <span className="text-sub text-xs font-bold uppercase tracking-widest mb-1">Remaining</span>
                     <div className="text-main text-4xl font-black tracking-tighter">
-                      {mode === 'time' ? timeLeft : `${userInput.trim().split(/\s+/).length}/${wordLimit}`}
+                      {mode === 'time' ? timeLeft : `${userInput.trim() === '' ? 0 : userInput.trim().split(/\s+/).length}/${wordLimit}`}
                     </div>
                   </div>
                   {state === 'running' && (
@@ -1067,7 +1100,7 @@ export default function App() {
                 </div>
 
                 {/* Typing Area */}
-                <div className="relative p-10 rounded-3xl bg-white/[0.02] border border-white/5 shadow-2xl backdrop-blur-sm cursor-text group transition-all hover:border-white/10" onClick={() => inputRef.current?.focus()}>
+                <div className={cn("relative p-10 rounded-3xl bg-white/[0.02] border border-white/5 shadow-2xl backdrop-blur-sm cursor-text group transition-all hover:border-white/10", settings.fontFamily)} onClick={() => inputRef.current?.focus()}>
                   <div className="absolute inset-0 bg-gradient-to-br from-main/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl" />
                   <input ref={inputRef} type="text" className="absolute opacity-0 pointer-events-none" value={userInput} onChange={handleInputChange} autoFocus />
                   {renderWords}
@@ -1158,7 +1191,7 @@ export default function App() {
             )
           ) : view === 'leaderboard' ? (
             <motion.div key="leaderboard" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-4xl">
-              <div className="flex items-center justify-between mb-12">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-main/10 rounded-2xl border border-main/20">
                     <Trophy className="w-8 h-8 text-main" />
@@ -1168,6 +1201,60 @@ export default function App() {
                     <p className="text-sub text-sm">Top 10 fastest typists in the world</p>
                   </div>
                 </div>
+                
+                <div className="flex flex-wrap items-center gap-2 bg-white/5 p-2 rounded-2xl border border-white/10">
+                  <div className="flex items-center gap-1 border-r border-white/10 pr-2 mr-1">
+                    <button 
+                      onClick={() => setLeaderboardCategory(prev => ({ ...prev, mode: 'time' }))}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
+                        leaderboardCategory.mode === 'time' ? "bg-main text-black" : "text-sub hover:text-text"
+                      )}
+                    >
+                      Time
+                    </button>
+                    <button 
+                      onClick={() => setLeaderboardCategory(prev => ({ ...prev, mode: 'words' }))}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
+                        leaderboardCategory.mode === 'words' ? "bg-main text-black" : "text-sub hover:text-text"
+                      )}
+                    >
+                      Words
+                    </button>
+                  </div>
+                  
+                  <div className="flex items-center gap-1">
+                    {leaderboardCategory.mode === 'time' ? (
+                      [15, 30, 60, 120].map(limit => (
+                        <button
+                          key={limit}
+                          onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
+                          className={cn(
+                            "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
+                            leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
+                          )}
+                        >
+                          {limit}
+                        </button>
+                      ))
+                    ) : (
+                      [10, 25, 50, 100].map(limit => (
+                        <button
+                          key={limit}
+                          onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
+                          className={cn(
+                            "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
+                            leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
+                          )}
+                        >
+                          {limit}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
                   Back to test <ChevronRight size={16} />
                 </button>
@@ -1393,6 +1480,58 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          ) : view === 'about' ? (
+            <motion.div key="about" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-4xl">
+              <div className="flex items-center justify-between mb-12">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-main/10 rounded-2xl border border-main/20">
+                    <Info className="w-8 h-8 text-main" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-black tracking-tight text-text">About SwiftType</h2>
+                    <p className="text-sub text-sm">Learn more about the project and the team</p>
+                  </div>
+                </div>
+                <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
+                  Back to test <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <div className="bg-white/5 rounded-3xl border border-white/10 p-12 shadow-2xl space-y-8 text-lg leading-relaxed text-sub">
+                <p>
+                  SwiftType is a modern, high-performance typing test application designed for speed, accuracy, and style. 
+                  Our mission is to provide the most fluid and customizable typing experience on the web. 
+                  Whether you're a professional developer, a competitive typist, or just someone looking to improve their skills, 
+                  SwiftType offers the tools and feedback you need to reach your full potential.
+                </p>
+                <p>
+                  Built with cutting-edge technologies like React, Tailwind CSS, and Framer Motion, 
+                  SwiftType is not just a tool; it's a platform for growth. 
+                  We believe that typing is a fundamental skill in the digital age, 
+                  and we're committed to making the process of mastering it as engaging and rewarding as possible.
+                </p>
+                <p>
+                  Our community is at the heart of everything we do. 
+                  From our global leaderboards to our active social channels, 
+                  we're constantly inspired by the dedication and talent of our users. 
+                  We're always listening to your feedback and working hard to bring you new features, 
+                  themes, and improvements that make SwiftType even better.
+                </p>
+                <p>
+                  At Krush Studios, we're passionate about creating beautiful, functional, and user-centric software. 
+                  SwiftType is the result of countless hours of design, development, and testing, 
+                  and we're incredibly proud to share it with the world. 
+                  We hope you enjoy using SwiftType as much as we enjoyed building it.
+                </p>
+                <p>
+                  Thank you for being a part of our journey. 
+                  Keep typing, keep improving, and keep pushing the boundaries of what's possible.
+                </p>
+                <div className="pt-8 border-t border-white/5 text-main font-black italic text-2xl">
+                  - Krush Studios ♥
+                </div>
+              </div>
+            </motion.div>
           ) : view === 'profile' && user ? (
             <motion.div key="profile" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-4xl">
               <div className="flex items-center justify-between mb-12">
@@ -1555,28 +1694,60 @@ export default function App() {
               </div>
 
               <div className="space-y-8">
-                {/* Theme Color */}
-                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
-                  <h3 className="text-lg font-bold text-text mb-4">Theme Color</h3>
-                  <div className="flex gap-4">
-                    {[
-                      { name: 'Emerald', value: '#10b981' },
-                      { name: 'Cyberpunk', value: '#f43f5e' },
-                      { name: 'Ocean', value: '#0ea5e9' },
-                      { name: 'Amethyst', value: '#a855f7' },
-                      { name: 'Amber', value: '#f59e0b' },
-                    ].map(color => (
-                      <button
-                        key={color.value}
-                        onClick={() => setSettings(s => ({ ...s, themeColor: color.value }))}
-                        className={cn(
-                          "w-12 h-12 rounded-full border-2 transition-transform hover:scale-110",
-                          settings.themeColor === color.value ? "border-white scale-110" : "border-transparent"
-                        )}
-                        style={{ backgroundColor: color.value }}
-                        title={color.name}
-                      />
-                    ))}
+                {/* Theme Colors */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-8">
+                  <div>
+                    <h3 className="text-lg font-bold text-text mb-4">Primary Color</h3>
+                    <div className="flex flex-wrap gap-4">
+                      {[
+                        { name: 'Emerald', value: '#10b981' },
+                        { name: 'Cyberpunk', value: '#f43f5e' },
+                        { name: 'Ocean', value: '#0ea5e9' },
+                        { name: 'Amethyst', value: '#a855f7' },
+                        { name: 'Amber', value: '#f59e0b' },
+                        { name: 'Crimson', value: '#e11d48' },
+                        { name: 'Indigo', value: '#6366f1' },
+                        { name: 'Lime', value: '#84cc16' },
+                      ].map(color => (
+                        <button
+                          key={color.value}
+                          onClick={() => setSettings(s => ({ ...s, themeColor: color.value }))}
+                          className={cn(
+                            "w-12 h-12 rounded-full border-2 transition-transform hover:scale-110",
+                            settings.themeColor === color.value ? "border-white scale-110" : "border-transparent"
+                          )}
+                          style={{ backgroundColor: color.value }}
+                          title={color.name}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-text mb-4">Secondary Color</h3>
+                    <div className="flex flex-wrap gap-4">
+                      {[
+                        { name: 'Slate', value: '#475569' },
+                        { name: 'Gray', value: '#6b7280' },
+                        { name: 'Zinc', value: '#71717a' },
+                        { name: 'Neutral', value: '#737373' },
+                        { name: 'Stone', value: '#78716c' },
+                        { name: 'Blue', value: '#3b82f6' },
+                        { name: 'Purple', value: '#8b5cf6' },
+                        { name: 'Pink', value: '#ec4899' },
+                      ].map(color => (
+                        <button
+                          key={color.value}
+                          onClick={() => setSettings(s => ({ ...s, secondaryColor: color.value }))}
+                          className={cn(
+                            "w-12 h-12 rounded-full border-2 transition-transform hover:scale-110",
+                            settings.secondaryColor === color.value ? "border-white scale-110" : "border-transparent"
+                          )}
+                          style={{ backgroundColor: color.value }}
+                          title={color.name}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -2058,6 +2229,7 @@ export default function App() {
           <a href="#" className="hover:text-main transition-colors">Github</a>
           <a href="#" className="hover:text-main transition-colors">Twitter</a>
           <a href="#" className="hover:text-main transition-colors">Discord</a>
+          <button onClick={() => setView('about')} className="hover:text-main transition-colors">About</button>
         </div>
         <div className="flex gap-6">
           <span>SwiftType v1.2.0</span>

@@ -180,17 +180,31 @@ async function startServer() {
   });
 
   app.get("/api/leaderboard", (req, res) => {
-    const scores = db.prepare(`
-      SELECT u.id, u.username, MAX(s.wpm) as wpm, s.accuracy, s.mode, s.created_at
-      FROM scores s
-      JOIN users u ON s.user_id = u.id
-      WHERE u.is_leaderboard_banned = 0 
-      AND (u.is_banned = 0 OR (u.ban_expires_at IS NOT NULL AND u.ban_expires_at < CURRENT_TIMESTAMP))
-      GROUP BY u.id
-      ORDER BY wpm DESC
-      LIMIT 10
-    `).all();
-    res.json(scores);
+    const { mode, limit } = req.query;
+    const filterMode = mode && limit ? `${mode} ${limit}` : 'time 30';
+
+    try {
+      const scores = db.prepare(`
+        SELECT u.id, u.username, s.wpm, s.accuracy, s.mode, s.created_at
+        FROM scores s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY wpm DESC) as rn
+            FROM scores
+            WHERE mode = ?
+          ) WHERE rn = 1
+        )
+        AND u.is_leaderboard_banned = 0 
+        AND (u.is_banned = 0 OR (u.ban_expires_at IS NOT NULL AND u.ban_expires_at < CURRENT_TIMESTAMP))
+        ORDER BY s.wpm DESC
+        LIMIT 10
+      `).all(filterMode);
+      res.json(scores);
+    } catch (err) {
+      console.error("Leaderboard fetch error:", err);
+      res.status(500).json({ error: "Failed to fetch leaderboard" });
+    }
   });
 
   // Profile Endpoints
