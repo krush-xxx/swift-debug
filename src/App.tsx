@@ -176,6 +176,12 @@ export default function App() {
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
   });
 
+  const handleThemeChange = (newSettings: Partial<AppSettings>) => {
+    const updated = { ...settings, ...newSettings };
+    localStorage.setItem('swifttype_settings', JSON.stringify(updated));
+    window.location.reload();
+  };
+
   useEffect(() => {
     localStorage.setItem('swifttype_settings', JSON.stringify(settings));
     const root = document.documentElement;
@@ -184,26 +190,60 @@ export default function App() {
     root.style.setProperty('--color-caret', settings.themeColor);
     root.style.setProperty('--color-correct', settings.themeColor);
 
+    let bgColor = '#0f172a';
     if (settings.siteTheme === 'dark') {
       root.style.setProperty('--color-bg', '#0f172a');
       root.style.setProperty('--color-text', '#f8fafc');
       root.style.setProperty('--color-sub', settings.secondaryColor);
+      bgColor = '#0f172a';
     } else if (settings.siteTheme === 'light') {
       root.style.setProperty('--color-bg', '#f8fafc');
       root.style.setProperty('--color-text', '#0f172a');
       root.style.setProperty('--color-sub', settings.secondaryColor);
+      bgColor = '#f8fafc';
     } else if (settings.siteTheme === 'midnight') {
       root.style.setProperty('--color-bg', '#000000');
       root.style.setProperty('--color-text', '#e5e5e5');
       root.style.setProperty('--color-sub', settings.secondaryColor);
+      bgColor = '#000000';
     } else if (settings.siteTheme === 'terminal') {
       root.style.setProperty('--color-bg', '#0c0c0c');
       root.style.setProperty('--color-text', settings.themeColor);
       root.style.setProperty('--color-sub', settings.secondaryColor);
+      bgColor = '#0c0c0c';
     }
     if (settings.caretSpeed === 'fast') root.style.setProperty('--caret-speed', '0.5s');
     else if (settings.caretSpeed === 'slow') root.style.setProperty('--caret-speed', '1.5s');
     else root.style.setProperty('--caret-speed', '1s');
+
+    // Update Favicon based on theme
+    const r = parseInt(settings.themeColor.slice(1, 3), 16);
+    const g = parseInt(settings.themeColor.slice(3, 5), 16);
+    const b = parseInt(settings.themeColor.slice(5, 7), 16);
+    const darkerMain = `rgb(${Math.floor(r * 0.15)}, ${Math.floor(g * 0.15)}, ${Math.floor(b * 0.15)})`;
+    
+    // Use the darker version of the main color for the background, unless it's light theme
+    const favBg = settings.siteTheme === 'light' ? bgColor : darkerMain;
+
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <rect width="100" height="100" rx="30" fill="${favBg}" />
+        <rect x="20" y="25" width="60" height="50" rx="10" fill="none" stroke="${settings.themeColor}" stroke-width="6" />
+        <circle cx="30" cy="38" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="43.33" cy="38" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="56.66" cy="38" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="70" cy="38" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="36.66" cy="50" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="50" cy="50" r="3.5" fill="${settings.themeColor}" />
+        <circle cx="63.33" cy="50" r="3.5" fill="${settings.themeColor}" />
+        <rect x="30" y="60" width="40" height="7" rx="3.5" fill="${settings.themeColor}" />
+      </svg>
+    `;
+    
+    const link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
+    if (link) {
+      link.href = `data:image/svg+xml;base64,${window.btoa(svg)}`;
+    }
   }, [settings]);
   
   // Auth State
@@ -1937,7 +1977,7 @@ export default function App() {
                       ].map(color => (
                         <button
                           key={color.value}
-                          onClick={() => setSettings(s => ({ ...s, themeColor: color.value }))}
+                          onClick={() => handleThemeChange({ themeColor: color.value })}
                           className={cn(
                             "w-12 h-12 rounded-full border-2 transition-transform hover:scale-110",
                             settings.themeColor === color.value ? "border-white scale-110" : "border-transparent"
@@ -1989,7 +2029,7 @@ export default function App() {
                     ].map(theme => (
                       <button
                         key={theme.value}
-                        onClick={() => setSettings(s => ({ ...s, siteTheme: theme.value as any }))}
+                        onClick={() => handleThemeChange({ siteTheme: theme.value as any })}
                         className={cn(
                           "py-3 px-4 rounded-xl border transition-all text-center font-bold",
                           settings.siteTheme === theme.value 
