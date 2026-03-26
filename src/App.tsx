@@ -1394,9 +1394,40 @@ export default function App() {
                     <p className="text-sub text-sm">Manage users and system announcements</p>
                   </div>
                 </div>
-                <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
-                  Back to test <ChevronRight size={16} />
-                </button>
+                <div className="flex items-center gap-6">
+                  <button 
+                    onClick={() => {
+                      const win = window.open('about:blank', '_blank');
+                      if (win) {
+                        win.document.write(`
+                          <!DOCTYPE html>
+                          <html>
+                            <head>
+                              <title>about:blank</title>
+                              <style>
+                                body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+                                iframe { width: 100%; height: 100%; border: none; }
+                              </style>
+                            </head>
+                            <body>
+                              <iframe src="${window.location.href}"></iframe>
+                            </body>
+                          </html>
+                        `);
+                        win.document.close();
+                        window.location.replace('https://google.com'); // Redirect original tab
+                      } else {
+                        alert('Please allow popups to use the cloak feature.');
+                      }
+                    }} 
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-sub hover:text-text rounded-xl border border-white/10 transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2"
+                  >
+                    Cloak Site
+                  </button>
+                  <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
+                    Back to test <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
