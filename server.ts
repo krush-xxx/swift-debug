@@ -59,6 +59,9 @@ try {
 try {
   db.exec("ALTER TABLE users ADD COLUMN ban_expires_at DATETIME");
 } catch (e) {}
+try {
+  db.exec("ALTER TABLE users ADD COLUMN bio TEXT");
+} catch (e) {}
 
 async function startServer() {
   const app = express();
@@ -83,7 +86,7 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const user = db.prepare(`
-        SELECT id, username, is_admin, is_banned, ban_reason, ban_expires_at 
+        SELECT id, username, is_admin, is_banned, ban_reason, ban_expires_at, bio 
         FROM users 
         WHERE id = ?
       `).get(Number(userId)) as any;
@@ -138,7 +141,8 @@ async function startServer() {
         is_admin: user.is_admin,
         is_banned: user.is_banned,
         ban_reason: user.ban_reason,
-        ban_expires_at: user.ban_expires_at
+        ban_expires_at: user.ban_expires_at,
+        bio: user.bio
       });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
@@ -256,6 +260,22 @@ async function startServer() {
       } else {
         res.status(500).json({ error: "Internal server error" });
       }
+    }
+  });
+
+  app.put("/api/users/:id/bio", (req, res) => {
+    const userId = req.params.id;
+    const { bio } = req.body;
+    
+    if (bio && bio.length > 500) {
+      return res.status(400).json({ error: "Bio must be less than 500 characters" });
+    }
+
+    try {
+      db.prepare("UPDATE users SET bio = ? WHERE id = ?").run(bio ? bio.trim() : null, userId);
+      res.json({ success: true, bio: bio ? bio.trim() : null });
+    } catch (err: any) {
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 

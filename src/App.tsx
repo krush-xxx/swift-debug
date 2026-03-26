@@ -103,6 +103,7 @@ interface UserData {
   is_banned: boolean;
   ban_reason?: string;
   ban_expires_at?: string;
+  bio?: string;
 }
 
 interface AdminUser {
@@ -113,6 +114,7 @@ interface AdminUser {
   is_leaderboard_banned: boolean;
   ban_reason?: string;
   ban_expires_at?: string;
+  bio?: string;
 }
 
 interface Announcement {
@@ -256,6 +258,7 @@ export default function App() {
   const [aboutClicks, setAboutClicks] = useState(0);
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [secretKey, setSecretKey] = useState('');
+  const [allRightMode, setAllRightMode] = useState(false);
 
   useEffect(() => {
     if (secretRainbow) {
@@ -315,6 +318,8 @@ export default function App() {
   const [profileRecentTests, setProfileRecentTests] = useState<ProfileRecentTest[]>([]);
   const [editingUsername, setEditingUsername] = useState(false);
   const [newUsername, setNewUsername] = useState('');
+  const [editingBio, setEditingBio] = useState(false);
+  const [newBio, setNewBio] = useState('');
   const [profileError, setProfileError] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
   
@@ -434,7 +439,20 @@ export default function App() {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (showAuthModal || view !== 'test') return;
       if (e.metaKey || e.ctrlKey || e.altKey || e.key === 'Tab') return;
-      inputRef.current?.focus();
+      
+      if (document.activeElement !== inputRef.current) {
+        inputRef.current?.focus();
+      } else {
+        const el = inputRef.current?.parentElement;
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const inView = (rect.top >= -50 && rect.bottom <= window.innerHeight + 50) || 
+                         (rect.top < 0 && rect.bottom > window.innerHeight);
+          if (!inView) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
@@ -528,6 +546,7 @@ export default function App() {
 
   const submitScore = async () => {
     if (!user?.id) return;
+    if (allRightMode) return;
     
     // Don't submit if it's a custom word count (not 10, 25, 50, 100) or custom time (not 15, 30, 60, 120)
     const standardTimes = [15, 30, 60, 120];
@@ -702,6 +721,33 @@ export default function App() {
     }
   };
 
+  const handleUpdateBio = async () => {
+    if (!user) return;
+    setProfileError('');
+    setProfileSuccess('');
+    
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/bio`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bio: newBio })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        const updatedUser = { ...user, bio: data.bio };
+        setUser(updatedUser);
+        localStorage.setItem('swifttype_user', JSON.stringify(updatedUser));
+        setProfileSuccess('Bio updated successfully');
+        setEditingBio(false);
+      } else {
+        setProfileError(data.error || 'Failed to update bio');
+      }
+    } catch (err) {
+      setProfileError('Network error');
+    }
+  };
+
   const handleAnnounce = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.is_admin || !announcementInput.trim()) return;
@@ -777,8 +823,12 @@ export default function App() {
       setState('running');
     }
     
-    const val = e.target.value;
+    let val = e.target.value;
     const targetText = words.join(' ');
+    
+    if (allRightMode && val.length > userInput.length) {
+      val = targetText.substring(0, val.length);
+    }
     
     let newKeystrokes = keystrokes;
     let newCorrectKeystrokes = correctKeystrokes;
@@ -1179,7 +1229,20 @@ export default function App() {
                 {/* Typing Area */}
                 <div className={cn("relative p-10 rounded-3xl bg-white/[0.02] border border-white/5 shadow-2xl backdrop-blur-sm cursor-text group transition-all hover:border-white/10", settings.fontFamily)} onClick={() => inputRef.current?.focus()}>
                   <div className="absolute inset-0 bg-gradient-to-br from-main/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl" />
-                  <input ref={inputRef} type="text" className="absolute opacity-0 pointer-events-none" value={userInput} onChange={handleInputChange} autoFocus />
+                  <input 
+                    ref={inputRef} 
+                    type="text" 
+                    className="fixed top-0 left-0 opacity-0 pointer-events-none w-0 h-0" 
+                    value={userInput} 
+                    onChange={handleInputChange} 
+                    onFocus={(e) => {
+                      const el = e.target.parentElement;
+                      setTimeout(() => {
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 50);
+                    }}
+                    autoFocus 
+                  />
                   {renderWords}
                 </div>
 
@@ -1433,6 +1496,22 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Announcement Section */}
                 <div className="lg:col-span-1 space-y-6">
+                  <div className="p-8 rounded-3xl bg-white/5 border border-white/10 shadow-xl">
+                    <h3 className="text-lg font-bold text-text mb-6">Admin Tools</h3>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-text">All Right Mode</div>
+                        <div className="text-xs text-sub mt-1">Auto-corrects every keystroke. Scores won't be saved.</div>
+                      </div>
+                      <button
+                        onClick={() => setAllRightMode(!allRightMode)}
+                        className={cn("w-12 h-6 rounded-full transition-colors relative", allRightMode ? "bg-main" : "bg-white/10")}
+                      >
+                        <div className={cn("w-4 h-4 rounded-full bg-bg absolute top-1 transition-all", allRightMode ? "left-7" : "left-1")} />
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="p-8 rounded-3xl bg-white/5 border border-white/10 shadow-xl">
                     <h3 className="text-lg font-bold text-text mb-6">{editingAnnouncementId ? 'Edit Announcement' : 'Post Announcement'}</h3>
                     <form onSubmit={handleAnnounce} className="space-y-4">
@@ -1703,6 +1782,45 @@ export default function App() {
                         )}
                         {profileError && <p className="text-error text-xs mt-2">{profileError}</p>}
                         {profileSuccess && <p className="text-main text-xs mt-2">{profileSuccess}</p>}
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-sub mb-2">Bio</label>
+                        {editingBio ? (
+                          <div className="flex flex-col gap-2">
+                            <textarea
+                              value={newBio}
+                              onChange={(e) => setNewBio(e.target.value)}
+                              className="w-full h-24 bg-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-main/50 transition-colors resize-none"
+                              placeholder="Tell us about yourself..."
+                              maxLength={500}
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button 
+                                onClick={() => { setEditingBio(false); setNewBio(user.bio || ''); setProfileError(''); }}
+                                className="bg-white/5 text-sub px-3 py-2 rounded-lg text-sm font-bold hover:bg-white/10 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                              <button 
+                                onClick={handleUpdateBio}
+                                className="bg-main text-bg px-3 py-2 rounded-lg text-sm font-bold hover:bg-main/90 transition-colors"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-2 bg-bg border border-white/5 rounded-lg px-4 py-3">
+                            <span className="text-text text-sm whitespace-pre-wrap">{user.bio || <span className="text-sub italic">No bio provided</span>}</span>
+                            <button 
+                              onClick={() => { setEditingBio(true); setNewBio(user.bio || ''); }}
+                              className="text-main text-xs font-bold uppercase tracking-wider hover:text-main/80 transition-colors self-end"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       <div>
