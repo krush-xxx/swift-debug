@@ -1561,15 +1561,15 @@ export default function App() {
                               <td className="px-8 py-4">
                                 <div className="flex flex-wrap gap-2">
                                   {u.is_banned ? (
-                                    <button disabled className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase rounded-lg border border-emerald-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
+                                    <button onClick={() => handleUserAction(u.id, 'unban')} className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition-all">Unban</button>
                                   ) : (
-                                    <button disabled className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
+                                    <button onClick={() => setBanModalUser(u)} className="px-3 py-1 bg-error/10 text-error text-[10px] font-bold uppercase rounded-lg border border-error/20 hover:bg-error/20 transition-all">Ban</button>
                                   )}
                                   
                                   {u.is_leaderboard_banned ? (
-                                    <button disabled className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
+                                    <button onClick={() => handleUserAction(u.id, 'leaderboard_unban')} className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all">LB Unban</button>
                                   ) : (
-                                    <button disabled className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 opacity-50 cursor-not-allowed blur-[2px]">OFFLINE 🔴</button>
+                                    <button onClick={() => handleUserAction(u.id, 'leaderboard_ban')} className="px-3 py-1 bg-orange-500/10 text-orange-500 text-[10px] font-bold uppercase rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all">LB Ban</button>
                                   )}
 
                                   {u.is_admin ? (
