@@ -18,7 +18,8 @@ import {
   X,
   ChevronRight,
   Activity,
-  Sliders
+  Sliders,
+  Coins
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -31,7 +32,7 @@ import {
 } from 'recharts';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { WORDS_EN, WORDS_ES, WORDS_FR, WORDS_DE } from './constants';
+import { WORDS_EN, WORDS_EN_DVORAK, WORDS_EN_COLEMAK, WORDS_ES, WORDS_FR, WORDS_DE } from './constants';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -39,7 +40,7 @@ function cn(...inputs: ClassValue[]) {
 
 type TestMode = 'time' | 'words';
 type TestState = 'idle' | 'running' | 'finished';
-type View = 'test' | 'leaderboard' | 'admin' | 'profile' | 'settings' | 'about';
+type View = 'test' | 'leaderboard' | 'admin' | 'profile' | 'settings' | 'about' | 'gamble';
 
 interface AppSettings {
   themeColor: string;
@@ -56,6 +57,7 @@ interface AppSettings {
   keySounds: 'none' | 'click' | 'beep';
   showKeymap: boolean;
   restartKey: 'tab' | 'esc' | 'alt' | 'none';
+  keyboardLayout: 'qwerty' | 'dvorak' | 'colemak';
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -73,6 +75,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   keySounds: 'none',
   showKeymap: false,
   restartKey: 'tab',
+  keyboardLayout: 'qwerty',
 };
 
 interface HistoryPoint {
@@ -80,6 +83,13 @@ interface HistoryPoint {
   wpm: number;
   rawWpm: number;
   errors: number;
+}
+
+interface InventoryItem {
+  id: number;
+  item_name: string;
+  rarity: string;
+  created_at: string;
 }
 
 interface ProfileStats {
@@ -104,6 +114,7 @@ interface UserData {
   ban_reason?: string;
   ban_expires_at?: string;
   bio?: string;
+  coins: number;
 }
 
 interface AdminUser {
@@ -115,6 +126,7 @@ interface AdminUser {
   ban_reason?: string;
   ban_expires_at?: string;
   bio?: string;
+  coins: number;
 }
 
 interface Announcement {
@@ -126,10 +138,12 @@ interface Announcement {
 interface LeaderboardEntry {
   id: number;
   username: string;
-  wpm: number;
-  accuracy: number;
-  mode: string;
-  created_at: string;
+  is_admin?: boolean;
+  wpm?: number;
+  accuracy?: number;
+  mode?: string;
+  created_at?: string;
+  coins?: number;
 }
 
 const Countdown = ({ expiresAt }: { expiresAt: string }) => {
@@ -290,6 +304,12 @@ export default function App() {
   
   // Profile State
   const [profileStats, setProfileStats] = useState<ProfileStats | null>(null);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  
+  // Gamble State
+  const [gambleBet, setGambleBet] = useState<number>(10);
+  const [gambleResult, setGambleResult] = useState<{win: boolean, profit: number, message: string} | null>(null);
+  const [isGambling, setIsGambling] = useState(false);
   
   const [secretRainbow, setSecretRainbow] = useState(() => {
     return document.cookie.includes('secret_rainbow=true');
@@ -345,7 +365,8 @@ export default function App() {
         id: 9999,
         username: 'KRUSH Admin',
         is_admin: true,
-        is_banned: false
+        is_banned: false,
+        coins: 999999
       };
       setUser(adminUser);
       localStorage.setItem('swifttype_user', JSON.stringify(adminUser));
@@ -397,11 +418,36 @@ export default function App() {
       osc.stop(ctx.currentTime + 0.05);
     } catch (e) {}
   };
+  const wordsContainerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastHistoryTimeRef = useRef<number>(0);
   const userInputRef = useRef(userInput);
   const keystrokesRef = useRef(keystrokes);
   const correctKeystrokesRef = useRef(correctKeystrokes);
+
+  useEffect(() => {
+    if (wordsContainerRef.current) {
+      const activeWord = wordsContainerRef.current.querySelector('[data-active="true"]');
+      if (activeWord instanceof HTMLElement) {
+        const container = wordsContainerRef.current;
+        const offsetTop = activeWord.offsetTop;
+        
+        // Scroll to keep the active word visible
+        // We want to scroll if the word is not on the first line
+        if (offsetTop > 40) {
+          container.scrollTo({
+            top: offsetTop - 40,
+            behavior: 'smooth'
+          });
+        } else {
+          container.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+          });
+        }
+      }
+    }
+  }, [userInput, words]);
 
   useEffect(() => {
     userInputRef.current = userInput;
@@ -412,9 +458,16 @@ export default function App() {
   // Initialize words
   const initTest = () => {
     let wordList = WORDS_EN;
-    if (settings.language === 'es') wordList = WORDS_ES;
-    if (settings.language === 'fr') wordList = WORDS_FR;
-    if (settings.language === 'de') wordList = WORDS_DE;
+    if (settings.language === 'en') {
+      if (settings.keyboardLayout === 'dvorak') wordList = WORDS_EN_DVORAK;
+      else if (settings.keyboardLayout === 'colemak') wordList = WORDS_EN_COLEMAK;
+    } else if (settings.language === 'es') {
+      wordList = WORDS_ES;
+    } else if (settings.language === 'fr') {
+      wordList = WORDS_FR;
+    } else if (settings.language === 'de') {
+      wordList = WORDS_DE;
+    }
     
     const shuffled = [...wordList].sort(() => Math.random() - 0.5);
     const count = mode === 'words' ? wordLimit : 100;
@@ -452,7 +505,7 @@ export default function App() {
 
   useEffect(() => {
     initTest();
-  }, [mode, timeLimit, wordLimit, settings.language]);
+  }, [mode, timeLimit, wordLimit, settings.language, settings.keyboardLayout]);
 
   // Restart Key Logic
   useEffect(() => {
@@ -529,16 +582,30 @@ export default function App() {
     const ks = currentKs !== undefined ? currentKs : keystrokesRef.current;
     const cks = currentCks !== undefined ? currentCks : correctKeystrokesRef.current;
 
-    const targetText = words.join(' ');
+    const userWords = input.split(' ');
     let currentCorrectChars = 0;
     let currentErrors = 0;
     
-    // Calculate what's currently correct in the input field
-    for (let i = 0; i < input.length; i++) {
-      if (input[i] === targetText[i]) {
-        currentCorrectChars++;
-      } else {
-        currentErrors++;
+    for (let i = 0; i < userWords.length; i++) {
+      const userWord = userWords[i];
+      const targetWord = words[i];
+      if (!targetWord) break;
+
+      const isLastWord = i === userWords.length - 1;
+
+      for (let j = 0; j < userWord.length; j++) {
+        if (userWord[j] === targetWord[j]) {
+          currentCorrectChars++;
+        } else {
+          currentErrors++;
+        }
+      }
+
+      if (!isLastWord) {
+        currentCorrectChars++; // Space is counted as correct
+        if (userWord.length < targetWord.length) {
+          currentErrors += (targetWord.length - userWord.length);
+        }
       }
     }
 
@@ -618,6 +685,18 @@ export default function App() {
             localStorage.setItem('swifttype_user', JSON.stringify(data));
           }
         });
+      } else if (res.ok) {
+        const data = await res.json();
+        if (data.earnedCoins > 0) {
+          setUser(prev => prev ? { ...prev, coins: (prev.coins || 0) + data.earnedCoins } : prev);
+          // Also update localStorage
+          const saved = localStorage.getItem('swifttype_user');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            parsed.coins = (parsed.coins || 0) + data.earnedCoins;
+            localStorage.setItem('swifttype_user', JSON.stringify(parsed));
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to submit score", err);
@@ -722,6 +801,120 @@ export default function App() {
     }
   };
 
+  const handleSellItem = async (itemId: number) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/inventory/sell`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({ itemId })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        // Update user balance and inventory
+        setUser(prev => prev ? { ...prev, coins: data.newBalance } : prev);
+        setInventory(prev => prev.filter(item => item.id !== itemId));
+        
+        const saved = localStorage.getItem('swifttype_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.coins = data.newBalance;
+          localStorage.setItem('swifttype_user', JSON.stringify(parsed));
+        }
+      } else {
+        alert(data.error || "Failed to sell item");
+      }
+    } catch (err) {
+      console.error("Failed to sell item", err);
+      alert("Network error");
+    }
+  };
+
+  const handleOpenCrate = async () => {
+    if (!user) return;
+    if ((user.coins || 0) < 100) {
+      setGambleResult({ win: false, profit: 0, message: "Insufficient coins for a crate (100 required)." });
+      return;
+    }
+
+    setIsGambling(true);
+    setGambleResult(null);
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/gamble/crate`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        }
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        setGambleResult({ win: true, profit: 0, message: data.message });
+        setUser(prev => prev ? { ...prev, coins: data.newBalance } : prev);
+        
+        const saved = localStorage.getItem('swifttype_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.coins = data.newBalance;
+          localStorage.setItem('swifttype_user', JSON.stringify(parsed));
+        }
+      } else {
+        setGambleResult({ win: false, profit: 0, message: data.error || "Failed to open crate" });
+      }
+    } catch (err) {
+      setGambleResult({ win: false, profit: 0, message: "Network error" });
+    } finally {
+      setIsGambling(false);
+    }
+  };
+
+  const handleGamble = async (game: string) => {
+    if (!user) return;
+    if (gambleBet <= 0 || gambleBet > (user.coins || 0)) {
+      setGambleResult({ win: false, profit: 0, message: "Invalid bet amount or insufficient coins." });
+      return;
+    }
+
+    setIsGambling(true);
+    setGambleResult(null);
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/gamble`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({ betAmount: gambleBet, game })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        setGambleResult({ win: data.win, profit: data.profit, message: data.message });
+        setUser(prev => prev ? { ...prev, coins: data.newBalance } : prev);
+        
+        const saved = localStorage.getItem('swifttype_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.coins = data.newBalance;
+          localStorage.setItem('swifttype_user', JSON.stringify(parsed));
+        }
+      } else {
+        setGambleResult({ win: false, profit: 0, message: data.error || "Gamble failed" });
+      }
+    } catch (err) {
+      setGambleResult({ win: false, profit: 0, message: "Network error" });
+    } finally {
+      setIsGambling(false);
+    }
+  };
+
   const fetchProfile = async () => {
     if (!user) return;
     try {
@@ -729,6 +922,14 @@ export default function App() {
       const data = await res.json();
       setProfileStats(data.stats);
       setProfileRecentTests(data.recent_tests);
+
+      const invRes = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/inventory`, {
+        headers: { 'x-user-id': user.id.toString() }
+      });
+      if (invRes.ok) {
+        const invData = await invRes.json();
+        setInventory(invData);
+      }
     } catch (err) {
       console.error("Failed to fetch profile stats", err);
     }
@@ -877,9 +1078,23 @@ export default function App() {
       playKeystrokeSound();
       newKeystrokes++;
       setKeystrokes(newKeystrokes);
-      if (val[val.length - 1] === targetText[val.length - 1]) {
-        newCorrectKeystrokes++;
-        setCorrectKeystrokes(newCorrectKeystrokes);
+      
+      const userWords = val.split(' ');
+      const currentWordIdx = userWords.length - 1;
+      const currentUserWord = userWords[currentWordIdx];
+      const targetWord = words[currentWordIdx];
+      
+      if (targetWord) {
+        if (val[val.length - 1] === ' ') {
+          newCorrectKeystrokes++;
+          setCorrectKeystrokes(newCorrectKeystrokes);
+        } else {
+          const charIdx = currentUserWord.length - 1;
+          if (currentUserWord[charIdx] === targetWord[charIdx]) {
+            newCorrectKeystrokes++;
+            setCorrectKeystrokes(newCorrectKeystrokes);
+          }
+        }
       }
     }
     
@@ -892,7 +1107,8 @@ export default function App() {
     }
 
     if (mode === 'words') {
-      if (val.length >= targetText.length) {
+      const userWords = val.split(' ');
+      if (userWords.length > words.length || (userWords.length === words.length && userWords[userWords.length - 1].length >= words[words.length - 1].length)) {
         finishTest();
       }
     }
@@ -960,24 +1176,36 @@ export default function App() {
       return "absolute -left-[1px] top-[10%] w-[2px] h-[80%] bg-main shadow-[0_0_8px_var(--color-main)]";
     };
 
+    const userWords = userInput.split(' ');
+
     return (
       <div 
-        className="relative leading-relaxed tracking-tight select-none h-[140px] overflow-hidden font-mono"
+        ref={wordsContainerRef}
+        className="relative leading-relaxed tracking-tight select-none h-[140px] overflow-hidden font-mono scroll-smooth"
         style={{ fontSize: `${settings.fontSize}rem` }}
       >
         <div className="flex flex-wrap gap-x-[0.3em] gap-y-2">
           {words.map((word, wordIdx) => {
+            const userWord = userWords[wordIdx];
+            const isWordTyped = wordIdx < userWords.length - 1;
+            const isWordCurrent = wordIdx === userWords.length - 1;
+            const isWordFuture = wordIdx > userWords.length - 1;
+            
             const wordStartIdx = words.slice(0, wordIdx).join(' ').length + (wordIdx > 0 ? 1 : 0);
             const wordEndIdx = wordStartIdx + word.length;
-            
+
             return (
-              <span key={wordIdx} className="relative">
+              <span 
+                key={wordIdx} 
+                data-active={isWordCurrent}
+                className={cn("relative", isWordTyped && userWord !== word && "border-b-2 border-error")}
+              >
                 {word.split('').map((char, charIdx) => {
                   const absoluteIdx = wordStartIdx + charIdx;
-                  const isTyped = absoluteIdx < userInput.length;
-                  const isCorrect = isTyped && userInput[absoluteIdx] === char;
-                  const isWrong = isTyped && userInput[absoluteIdx] !== char;
-                  const isCurrent = absoluteIdx === userInput.length;
+                  const isTyped = !isWordFuture && userWord !== undefined && charIdx < userWord.length;
+                  const isCorrect = isTyped && userWord[charIdx] === char;
+                  const isWrong = isTyped && userWord[charIdx] !== char;
+                  const isCurrent = isWordCurrent && charIdx === userWord.length;
                   
                   return (
                     <span 
@@ -1007,13 +1235,41 @@ export default function App() {
                     </span>
                   );
                 })}
+                
+                {/* Render extra characters typed by the user */}
+                {!isWordFuture && userWord && userWord.length > word.length && (
+                  <span className="text-error border-b-2 border-error opacity-80">
+                    {userWord.substring(word.length).split('').map((extraChar, extraIdx) => (
+                      <span key={`extra-${extraIdx}`} className="relative">
+                        {isWordCurrent && (word.length + extraIdx) === userWord.length && (
+                          <motion.div 
+                            layoutId="caret"
+                            className={cn(getCaretClass(settings.caretStyle), "caret-blink")}
+                            transition={settings.smoothCaret ? { type: 'spring', stiffness: 500, damping: 30 } : { duration: 0 }}
+                          />
+                        )}
+                        {extraChar}
+                      </span>
+                    ))}
+                  </span>
+                )}
+
+                {/* Caret at the end of the word if it's the last word or if we've typed extra chars */}
+                {isWordCurrent && userWord && userWord.length >= word.length && (wordIdx === words.length - 1 || userWord.length > word.length) && (
+                  <motion.div 
+                    layoutId="caret"
+                    className={cn(getCaretClass(settings.caretStyle), "caret-blink")}
+                    transition={settings.smoothCaret ? { type: 'spring', stiffness: 500, damping: 30 } : { duration: 0 }}
+                  />
+                )}
+
                 {wordIdx < words.length - 1 && (
                   <span className={cn(
                     "transition-all duration-150 relative",
-                    userInput.length > wordEndIdx ? (userInput[wordEndIdx] === ' ' ? 'text-sub/40' : 'bg-error/20 text-error') : 'text-sub/40',
+                    isWordTyped ? 'text-sub/40' : 'text-sub/40',
                   )}>
-                    {userInput.length === wordEndIdx && (
-                       <motion.div 
+                    {isWordCurrent && userWord && userWord.length === word.length && (
+                      <motion.div 
                         layoutId="caret"
                         className={cn(getCaretClass(settings.caretStyle), "caret-blink")}
                         transition={settings.smoothCaret ? { type: 'spring', stiffness: 500, damping: 30 } : { duration: 0 }}
@@ -1038,13 +1294,39 @@ export default function App() {
   }, [words, userInput, settings, paceIndex]);
 
   const renderKeymap = useCallback(() => {
-    const rows = [
-      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
-      ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
-      ['z', 'x', 'c', 'v', 'b', 'n', 'm']
-    ];
+    const layouts = {
+      qwerty: [
+        ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+        ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+        ['z', 'x', 'c', 'v', 'b', 'n', 'm']
+      ],
+      dvorak: [
+        ["'", ',', '.', 'p', 'y', 'f', 'g', 'c', 'r', 'l'],
+        ['a', 'o', 'e', 'u', 'i', 'd', 'h', 't', 'n', 's'],
+        [';', 'q', 'j', 'k', 'x', 'b', 'm', 'w', 'v', 'z']
+      ],
+      colemak: [
+        ['q', 'w', 'f', 'p', 'g', 'j', 'l', 'u', 'y', ';'],
+        ['a', 'r', 's', 't', 'd', 'h', 'n', 'e', 'i', 'o'],
+        ['z', 'x', 'c', 'v', 'b', 'k', 'm', ',', '.', '/']
+      ]
+    };
 
-    const nextChar = words.join(' ')[userInput.length]?.toLowerCase();
+    const rows = layouts[settings.keyboardLayout || 'qwerty'];
+
+    const userWords = userInput.split(' ');
+    const currentWordIdx = userWords.length - 1;
+    const currentUserWord = userWords[currentWordIdx];
+    const targetWord = words[currentWordIdx];
+    
+    let nextChar = '';
+    if (targetWord) {
+      if (currentUserWord.length < targetWord.length) {
+        nextChar = targetWord[currentUserWord.length].toLowerCase();
+      } else {
+        nextChar = ' ';
+      }
+    }
 
     return (
       <div className="flex flex-col gap-2 items-center opacity-50 pointer-events-none select-none">
@@ -1080,7 +1362,7 @@ export default function App() {
         </div>
       </div>
     );
-  }, [words, userInput]);
+  }, [words, userInput, settings.keyboardLayout]);
 
   const isBanned = user?.is_banned && !user?.is_admin;
 
@@ -1145,6 +1427,7 @@ export default function App() {
         <nav className="flex gap-8 text-sub text-sm font-medium items-center">
           <button onClick={() => setView('test')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'test' && "text-main")}><Keyboard size={16} /> Test</button>
           <button onClick={() => { setView('leaderboard'); fetchLeaderboard(); }} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'leaderboard' && "text-main")}><Trophy size={16} /> Leaderboard</button>
+          <button onClick={() => setView('gamble')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'gamble' && "text-main")}><Coins size={16} /> Gamble</button>
           <button onClick={handleAboutClick} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'about' && "text-main")}><Info size={16} /> About</button>
           <button onClick={() => setView('settings')} className={cn("hover:text-main transition-colors flex items-center gap-2", view === 'settings' && "text-main")}><Sliders size={16} /> Settings</button>
           {user?.is_admin && (
@@ -1155,6 +1438,10 @@ export default function App() {
           
           {user ? (
             <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-main bg-main/10 px-3 py-1.5 rounded-xl border border-main/20 font-bold">
+                <Coins size={16} />
+                {user.coins || 0}
+              </div>
               <button 
                 onClick={() => { setView('profile'); fetchProfile(); setNewUsername(user.username); setProfileError(''); setProfileSuccess(''); setEditingUsername(false); }}
                 className={cn(
@@ -1402,37 +1689,48 @@ export default function App() {
                     >
                       Words
                     </button>
+                    <button 
+                      onClick={() => setLeaderboardCategory(prev => ({ ...prev, mode: 'coins' }))}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
+                        leaderboardCategory.mode === 'coins' ? "bg-main text-black" : "text-sub hover:text-text"
+                      )}
+                    >
+                      Coins
+                    </button>
                   </div>
                   
-                  <div className="flex items-center gap-1">
-                    {leaderboardCategory.mode === 'time' ? (
-                      [15, 30, 60, 120].map(limit => (
-                        <button
-                          key={limit}
-                          onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
-                          className={cn(
-                            "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
-                            leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
-                          )}
-                        >
-                          {limit}
-                        </button>
-                      ))
-                    ) : (
-                      [10, 25, 50, 100].map(limit => (
-                        <button
-                          key={limit}
-                          onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
-                          className={cn(
-                            "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
-                            leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
-                          )}
-                        >
-                          {limit}
-                        </button>
-                      ))
-                    )}
-                  </div>
+                  {leaderboardCategory.mode !== 'coins' && (
+                    <div className="flex items-center gap-1">
+                      {leaderboardCategory.mode === 'time' ? (
+                        [15, 30, 60, 120].map(limit => (
+                          <button
+                            key={limit}
+                            onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
+                            className={cn(
+                              "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
+                              leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
+                            )}
+                          >
+                            {limit}
+                          </button>
+                        ))
+                      ) : (
+                        [10, 25, 50, 100].map(limit => (
+                          <button
+                            key={limit}
+                            onClick={() => setLeaderboardCategory(prev => ({ ...prev, limit }))}
+                            className={cn(
+                              "w-10 h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center",
+                              leaderboardCategory.limit === limit ? "text-main bg-main/10 border border-main/20" : "text-sub hover:text-text"
+                            )}
+                          >
+                            {limit}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <button onClick={() => setView('test')} className="text-sub hover:text-text transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
@@ -1447,10 +1745,16 @@ export default function App() {
                       <th className="px-8 py-6">Rank</th>
                       <th className="px-8 py-6">ID</th>
                       <th className="px-8 py-6">User</th>
-                      <th className="px-8 py-6">WPM</th>
-                      <th className="px-8 py-6">Accuracy</th>
-                      <th className="px-8 py-6">Mode</th>
-                      <th className="px-8 py-6">Date</th>
+                      {leaderboardCategory.mode === 'coins' ? (
+                        <th className="px-8 py-6 text-right">Coins</th>
+                      ) : (
+                        <>
+                          <th className="px-8 py-6">WPM</th>
+                          <th className="px-8 py-6">Accuracy</th>
+                          <th className="px-8 py-6">Mode</th>
+                          <th className="px-8 py-6">Date</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -1472,13 +1776,31 @@ export default function App() {
                             <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-sub group-hover:text-main transition-colors">
                               <User size={14} />
                             </div>
-                            <span className="font-bold text-text">{entry.username}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-text">{entry.username}</span>
+                              {entry.is_admin && (
+                                <span className="px-1.5 py-0.5 bg-main/20 text-main text-[8px] font-black uppercase tracking-widest rounded border border-main/30">
+                                  Admin
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
-                        <td className="px-8 py-6 font-black text-main text-xl">{entry.wpm}</td>
-                        <td className="px-8 py-6 text-text font-medium">{entry.accuracy}%</td>
-                        <td className="px-8 py-6 text-sub text-xs font-bold uppercase tracking-widest">{entry.mode}</td>
-                        <td className="px-8 py-6 text-sub text-xs">{new Date(entry.created_at).toLocaleDateString()}</td>
+                        {leaderboardCategory.mode === 'coins' ? (
+                          <td className="px-8 py-6">
+                            <div className="font-black text-main text-xl flex items-center justify-end gap-2">
+                              <Coins size={20} />
+                              {entry.coins}
+                            </div>
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-8 py-6 font-black text-main text-xl">{entry.wpm}</td>
+                            <td className="px-8 py-6 text-text font-medium">{entry.accuracy}%</td>
+                            <td className="px-8 py-6 text-sub text-xs font-bold uppercase tracking-widest">{entry.mode}</td>
+                            <td className="px-8 py-6 text-sub text-xs">{entry.created_at ? new Date(entry.created_at).toLocaleDateString() : ''}</td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -1905,6 +2227,57 @@ export default function App() {
                     </div>
                   )}
 
+                  {profileRecentTests.length > 1 && (
+                    <div className="bg-white/5 rounded-3xl border border-white/10 p-6 shadow-2xl">
+                      <h3 className="text-lg font-bold text-text mb-6 flex items-center gap-2">
+                        <BarChart2 size={18} className="text-main" /> Typing Analytics
+                      </h3>
+                      <div className="h-[250px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={[...profileRecentTests].reverse()}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                            <XAxis 
+                              dataKey="created_at" 
+                              hide 
+                            />
+                            <YAxis 
+                              stroke="rgba(255,255,255,0.3)" 
+                              fontSize={10} 
+                              tickLine={false} 
+                              axisLine={false}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: '#1e293b', 
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: '12px',
+                                fontSize: '12px'
+                              }}
+                              itemStyle={{ padding: '2px 0' }}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="wpm" 
+                              stroke="var(--color-main)" 
+                              strokeWidth={3} 
+                              dot={{ r: 4, fill: 'var(--color-main)', strokeWidth: 0 }}
+                              activeDot={{ r: 6, strokeWidth: 0 }}
+                              name="WPM"
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="accuracy" 
+                              stroke="#94a3b8" 
+                              strokeWidth={2} 
+                              dot={false}
+                              name="Accuracy"
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-white/5 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
                     <div className="p-6 border-b border-white/5">
                       <h3 className="text-lg font-bold text-text flex items-center gap-2">
@@ -1944,8 +2317,175 @@ export default function App() {
                       </table>
                     </div>
                   </div>
+
+                  {/* Inventory Section */}
+                  <div className="bg-white/5 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
+                    <div className="p-6 border-b border-white/5">
+                      <h3 className="text-lg font-bold text-text flex items-center gap-2">
+                        <span className="text-main">📦</span> Inventory
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      {inventory.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                          {inventory.map((item) => (
+                            <div key={item.id} className={cn(
+                              "p-4 rounded-2xl border flex flex-col items-center justify-center text-center gap-2",
+                              item.rarity === 'Legendary' ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-500" :
+                              item.rarity === 'Epic' ? "bg-purple-500/10 border-purple-500/30 text-purple-500" :
+                              item.rarity === 'Rare' ? "bg-blue-500/10 border-blue-500/30 text-blue-500" :
+                              item.rarity === 'Uncommon' ? "bg-green-500/10 border-green-500/30 text-green-500" :
+                              "bg-gray-500/10 border-gray-500/30 text-gray-400"
+                            )}>
+                              <div className="text-2xl font-black">🔪</div>
+                              <div>
+                                <div className="font-bold text-sm">{item.item_name}</div>
+                                <div className="text-[10px] uppercase tracking-widest opacity-80">{item.rarity}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center text-sub text-sm py-8">
+                          Your inventory is empty. Open some crates in the Gamble tab!
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
+            </motion.div>
+          ) : view === 'gamble' ? (
+            <motion.div key="gamble" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-3xl">
+              <div className="flex items-center gap-4 mb-12">
+                <div className="p-3 bg-main/10 rounded-2xl border border-main/20">
+                  <Coins className="w-8 h-8 text-main" />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight text-text">Gamble</h2>
+                  <p className="text-sub text-sm">Risk your coins to win big!</p>
+                </div>
+              </div>
+
+              {!user ? (
+                <div className="text-center p-12 bg-white/5 rounded-3xl border border-white/10">
+                  <p className="text-sub mb-4">You must be logged in to gamble.</p>
+                  <button onClick={() => setShowAuthModal(true)} className="px-6 py-2 bg-main text-bg font-bold rounded-xl">Login</button>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  <div className="bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col items-center">
+                    <h3 className="text-xl font-bold text-text mb-2">Your Balance</h3>
+                    <div className="text-5xl font-black text-main flex items-center gap-4">
+                      <Coins size={40} />
+                      {user.coins || 0}
+                    </div>
+                  </div>
+
+                  <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
+                    <div>
+                      <label className="block text-sub text-sm font-bold mb-2">Bet Amount</label>
+                      <input 
+                        type="number" 
+                        value={gambleBet}
+                        onChange={e => setGambleBet(Math.max(1, parseInt(e.target.value) || 0))}
+                        className="w-full bg-bg border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:border-main transition-colors"
+                        min="1"
+                        max={user.coins || 0}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <button 
+                        onClick={() => handleGamble('coinflip')}
+                        disabled={isGambling || gambleBet > (user.coins || 0) || gambleBet <= 0}
+                        className="p-6 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-4"
+                      >
+                        <div className="w-16 h-16 rounded-full bg-main/20 flex items-center justify-center text-main border border-main/50">
+                          <Coins size={32} />
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-bold text-text text-lg">Coin Flip</h4>
+                          <p className="text-sub text-sm">50% chance to win 2x</p>
+                        </div>
+                      </button>
+
+                      <button 
+                        onClick={() => handleGamble('dice')}
+                        disabled={isGambling || gambleBet > (user.coins || 0) || gambleBet <= 0}
+                        className="p-6 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-4"
+                      >
+                        <div className="w-16 h-16 rounded-xl bg-main/20 flex items-center justify-center text-main border border-main/50">
+                          <span className="text-3xl font-black">⚄</span>
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-bold text-text text-lg">Roll Dice</h4>
+                          <p className="text-sub text-sm">1/6 chance to win 5x</p>
+                        </div>
+                      </button>
+
+                      <button 
+                        onClick={handleOpenCrate}
+                        disabled={isGambling || (user.coins || 0) < 100}
+                        className="p-6 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-4"
+                      >
+                        <div className="w-16 h-16 rounded-xl bg-main/20 flex items-center justify-center text-main border border-main/50">
+                          <span className="text-3xl font-black">📦</span>
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-bold text-text text-lg">Knife Crate</h4>
+                          <p className="text-sub text-sm">Cost: 100 Coins</p>
+                        </div>
+                      </button>
+                    </div>
+
+                    {gambleResult && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={cn(
+                          "p-6 rounded-2xl border text-center font-bold text-lg",
+                          gambleResult.win 
+                            ? "bg-main/10 border-main/30 text-main" 
+                            : "bg-red-500/10 border-red-500/30 text-red-500"
+                        )}
+                      >
+                        {gambleResult.message}
+                      </motion.div>
+                    )}
+                  </div>
+
+                  <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
+                    <h3 className="text-xl font-bold text-text">Your Inventory</h3>
+                    {inventory.length > 0 ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {inventory.map((item) => (
+                          <div key={item.id} className={cn(
+                            "p-4 rounded-2xl border flex flex-col items-center justify-center text-center gap-2",
+                            item.rarity === 'Legendary' ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-500" :
+                            item.rarity === 'Epic' ? "bg-purple-500/10 border-purple-500/30 text-purple-500" :
+                            item.rarity === 'Rare' ? "bg-blue-500/10 border-blue-500/30 text-blue-500" :
+                            item.rarity === 'Uncommon' ? "bg-green-500/10 border-green-500/30 text-green-500" :
+                            "bg-gray-500/10 border-gray-500/30 text-gray-400"
+                          )}>
+                            <div className="text-2xl font-black">🔪</div>
+                            <div className="font-bold text-sm">{item.item_name}</div>
+                            <div className="text-[10px] uppercase tracking-widest opacity-80">{item.rarity}</div>
+                            <button 
+                              onClick={() => handleSellItem(item.id)}
+                              className="mt-2 text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg transition-colors"
+                            >
+                              Sell
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sub text-sm">Your inventory is empty.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </motion.div>
           ) : view === 'settings' ? (
             <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-3xl">
@@ -2064,6 +2604,31 @@ export default function App() {
                         )}
                       >
                         {lang.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Keyboard Layout */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                  <h3 className="text-lg font-bold text-text mb-4">Keyboard Layout</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {[
+                      { name: 'QWERTY', value: 'qwerty' },
+                      { name: 'Dvorak', value: 'dvorak' },
+                      { name: 'Colemak', value: 'colemak' },
+                    ].map(layout => (
+                      <button
+                        key={layout.value}
+                        onClick={() => setSettings(s => ({ ...s, keyboardLayout: layout.value as any }))}
+                        className={cn(
+                          "py-3 px-4 rounded-xl border transition-all text-center font-bold",
+                          (settings.keyboardLayout || 'qwerty') === layout.value 
+                            ? "bg-main/20 border-main/50 text-main" 
+                            : "bg-white/5 border-white/10 text-sub hover:bg-white/10 hover:text-text"
+                        )}
+                      >
+                        {layout.name}
                       </button>
                     ))}
                   </div>

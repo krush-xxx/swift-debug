@@ -20,7 +20,9 @@ db.exec(`
     is_banned INTEGER DEFAULT 0,
     is_leaderboard_banned INTEGER DEFAULT 0,
     ban_reason TEXT,
-    ban_expires_at DATETIME
+    ban_expires_at DATETIME,
+    bio TEXT,
+    coins INTEGER DEFAULT 500
   );
   CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +37,14 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS inventory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    rarity TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
   -- Insert admin user
@@ -62,6 +72,14 @@ try {
 try {
   db.exec("ALTER TABLE users ADD COLUMN bio TEXT");
 } catch (e) {}
+try {
+  db.exec("ALTER TABLE users ADD COLUMN coins INTEGER DEFAULT 500");
+} catch (e) {}
+
+// Give existing users the new starting balance if they have 100 or less
+try {
+  db.exec("UPDATE users SET coins = 500 WHERE coins <= 100 AND id != 9999");
+} catch (e) {}
 
 async function startServer() {
   const app = express();
@@ -86,7 +104,7 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const user = db.prepare(`
-        SELECT id, username, is_admin, is_banned, ban_reason, ban_expires_at, bio 
+        SELECT id, username, is_admin, is_banned, ban_reason, ban_expires_at, bio, coins 
         FROM users 
         WHERE id = ?
       `).get(Number(userId)) as any;
@@ -113,7 +131,7 @@ async function startServer() {
     try {
       const stmt = db.prepare("INSERT INTO users (username, password) VALUES (?, ?)");
       const result = stmt.run(username, password);
-      res.json({ id: result.lastInsertRowid, username, is_admin: 0, is_banned: 0 });
+      res.json({ id: result.lastInsertRowid, username, is_admin: 0, is_banned: 0, coins: 500 });
     } catch (err: any) {
       if (err.code === 'SQLITE_CONSTRAINT') {
         res.status(400).json({ error: "Username already exists" });
@@ -142,7 +160,8 @@ async function startServer() {
         is_banned: user.is_banned,
         ban_reason: user.ban_reason,
         ban_expires_at: user.ban_expires_at,
-        bio: user.bio
+        bio: user.bio,
+        coins: user.coins
       });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
@@ -167,7 +186,7 @@ async function startServer() {
     if (!user_id) return res.status(401).json({ error: "Unauthorized" });
     
     // Check if user is banned
-    const user = db.prepare("SELECT is_banned, ban_expires_at FROM users WHERE id = ?").get(user_id) as any;
+    const user = db.prepare("SELECT is_banned, ban_expires_at, coins FROM users WHERE id = ?").get(user_id) as any;
     if (!user) return res.status(404).json({ error: "User not found" });
     
     if (user.is_banned) {
@@ -180,16 +199,214 @@ async function startServer() {
 
     const stmt = db.prepare("INSERT INTO scores (user_id, wpm, accuracy, mode) VALUES (?, ?, ?, ?)");
     stmt.run(user_id, wpm, accuracy, mode);
-    res.json({ success: true });
+
+    // Award coins based on performance
+    // E.g., 1 coin per 10 WPM, multiplied by accuracy percentage
+    const earnedCoins = Math.max(0, Math.floor((wpm / 10) * (accuracy / 100)));
+    if (earnedCoins > 0) {
+      db.prepare("UPDATE users SET coins = coins + ? WHERE id = ?").run(earnedCoins, user_id);
+    }
+
+    res.json({ success: true, earnedCoins });
+  });
+
+  // Gamble Endpoint
+  app.post("/api/gamble", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const { game } = req.body;
+    const betAmount = parseInt(req.body.betAmount);
+    if (!betAmount || isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ error: "Invalid bet amount" });
+    }
+
+    try {
+      db.prepare("BEGIN TRANSACTION").run();
+      const user = db.prepare("SELECT coins FROM users WHERE id = ?").get(Number(userId)) as any;
+      
+      if (!user) {
+        db.prepare("ROLLBACK").run();
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.coins < betAmount) {
+        db.prepare("ROLLBACK").run();
+        return res.status(400).json({ error: "Insufficient coins" });
+      }
+
+      let win = false;
+      let multiplier = 0;
+
+      if (game === 'coinflip') {
+        // 50% chance to double
+        win = Math.random() < 0.5;
+        multiplier = win ? 2 : 0;
+      } else if (game === 'dice') {
+        // 1/6 chance to win 5x
+        win = Math.random() < (1 / 6);
+        multiplier = win ? 5 : 0;
+      } else {
+        db.prepare("ROLLBACK").run();
+        return res.status(400).json({ error: "Invalid game type" });
+      }
+
+      const winnings = betAmount * multiplier;
+      const profit = winnings - betAmount;
+      const newBalance = user.coins + profit;
+
+      db.prepare("UPDATE users SET coins = ? WHERE id = ?").run(newBalance, Number(userId));
+      db.prepare("COMMIT").run();
+
+      res.json({ 
+        success: true, 
+        win, 
+        profit, 
+        newBalance,
+        message: win ? `You won ${winnings} coins!` : `You lost ${betAmount} coins.`
+      });
+    } catch (err) {
+      db.prepare("ROLLBACK").run();
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/gamble/crate", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const CRATE_COST = 100;
+
+    try {
+      db.prepare("BEGIN TRANSACTION").run();
+      const user = db.prepare("SELECT coins FROM users WHERE id = ?").get(Number(userId)) as any;
+      
+      if (!user) {
+        db.prepare("ROLLBACK").run();
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.coins < CRATE_COST) {
+        db.prepare("ROLLBACK").run();
+        return res.status(400).json({ error: "Insufficient coins" });
+      }
+
+      // Deduct coins
+      const newBalance = user.coins - CRATE_COST;
+      db.prepare("UPDATE users SET coins = ? WHERE id = ?").run(newBalance, Number(userId));
+
+      // Determine drop
+      const rand = Math.random();
+      let item = "";
+      let rarity = "";
+
+      if (rand < 0.01) {
+        item = "Butterfly Knife";
+        rarity = "Legendary";
+      } else if (rand < 0.05) {
+        item = "Karambit";
+        rarity = "Epic";
+      } else if (rand < 0.20) {
+        item = "Bayonet";
+        rarity = "Rare";
+      } else if (rand < 0.50) {
+        item = "Flip Knife";
+        rarity = "Uncommon";
+      } else {
+        item = "Gut Knife";
+        rarity = "Common";
+      }
+
+      // Add to inventory
+      db.prepare("INSERT INTO inventory (user_id, item_name, rarity) VALUES (?, ?, ?)").run(Number(userId), item, rarity);
+      
+      db.prepare("COMMIT").run();
+
+      res.json({ 
+        success: true, 
+        item,
+        rarity,
+        newBalance,
+        message: `You unboxed a ${rarity} ${item}!`
+      });
+    } catch (err) {
+      db.prepare("ROLLBACK").run();
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/inventory/sell", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    const { itemId } = req.body;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      db.prepare("BEGIN TRANSACTION").run();
+      const item = db.prepare("SELECT rarity FROM inventory WHERE id = ? AND user_id = ?").get(Number(itemId), Number(userId)) as any;
+      
+      if (!item) {
+        db.prepare("ROLLBACK").run();
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      const rarityPrices: Record<string, number> = {
+        'Common': 10,
+        'Uncommon': 25,
+        'Rare': 75,
+        'Epic': 250,
+        'Legendary': 1000
+      };
+
+      const price = rarityPrices[item.rarity] || 5;
+      
+      db.prepare("UPDATE users SET coins = coins + ? WHERE id = ?").run(price, Number(userId));
+      db.prepare("DELETE FROM inventory WHERE id = ?").run(Number(itemId));
+      
+      db.prepare("COMMIT").run();
+      res.json({ success: true, price });
+    } catch (err) {
+      db.prepare("ROLLBACK").run();
+      res.status(500).json({ error: "Failed to sell item" });
+    }
+  });
+
+  app.get("/api/inventory", (req, res) => {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const items = db.prepare("SELECT id, item_name, rarity, created_at FROM inventory WHERE user_id = ? ORDER BY created_at DESC").all(Number(userId));
+      res.json(items);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch inventory" });
+    }
   });
 
   app.get("/api/leaderboard", (req, res) => {
     const { mode, limit } = req.query;
+
+    if (mode === 'coins') {
+      try {
+        const richest = db.prepare(`
+          SELECT id, username, coins, is_admin
+          FROM users
+          WHERE is_leaderboard_banned = 0 
+          AND (is_banned = 0 OR (ban_expires_at IS NOT NULL AND ban_expires_at < CURRENT_TIMESTAMP))
+          ORDER BY coins DESC
+          LIMIT 10
+        `).all();
+        return res.json(richest);
+      } catch (err) {
+        console.error("Coin leaderboard fetch error:", err);
+        return res.status(500).json({ error: "Failed to fetch coin leaderboard" });
+      }
+    }
+
     const filterMode = mode && limit ? `${mode} ${limit}` : 'time 30';
 
     try {
       const scores = db.prepare(`
-        SELECT u.id, u.username, s.wpm, s.accuracy, s.mode, s.created_at
+        SELECT u.id, u.username, u.is_admin, s.wpm, s.accuracy, s.mode, s.created_at
         FROM scores s
         JOIN users u ON s.user_id = u.id
         WHERE s.id IN (
@@ -229,7 +446,7 @@ async function startServer() {
       FROM scores
       WHERE user_id = ?
       ORDER BY created_at DESC
-      LIMIT 10
+      LIMIT 50
     `).all(userId);
 
     res.json({
